@@ -1254,7 +1254,7 @@ async function loadCompanies() {
     const companies = data.companies || [];
     const tbody = document.getElementById('companiesTableBody');
     tbody.innerHTML = companies.map(c =>
-      '<tr style="cursor:pointer" onclick="openCompanyDetail(' + JSON.stringify(c.name) + ')" class="company-row"><td><span style="margin-right:6px">🏢</span>'+esc(c.name)+' <span style="color:var(--text-muted);font-size:11px">›</span></td><td>'+esc(c.count)+'</td></tr>').join('');
+      '<tr style="cursor:pointer" class="company-row" data-company="' + esc(c.name) + '" onclick="openCompanyDetail(this.dataset.company)"><td><span style="margin-right:6px">🏢</span>'+esc(c.name)+' <span style="color:var(--text-muted);font-size:11px">›</span></td><td>'+esc(c.count)+'</td></tr>').join('');
     if (!companies.length) tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text-muted)">No companies.</td></tr>';
     const counter = document.getElementById('companiesCounter');
     if (counter) counter.textContent = companies.length + ' of ' + (data.total || companies.length);
