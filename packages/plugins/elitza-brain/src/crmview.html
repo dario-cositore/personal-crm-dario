@@ -609,6 +609,8 @@
   #peopleTable thead th { position:sticky; top:0; background:var(--bg-panel); z-index:2; padding:10px 12px; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-muted); border-bottom:1px solid var(--border); }
   #peopleTable tbody tr { transition:background .12s; }
   #peopleTable tbody tr:hover { background:var(--bg-hover); }
+  .company-row:hover { background:var(--bg-hover); }
+  .company-row:hover td { color:var(--accent); }
   #peopleTable tbody td { padding:10px 12px; font-size:13px; border-bottom:1px solid var(--border); }
   #peopleTable tbody tr:last-child td { border-bottom:none; }
   .people-avatar { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#5e6ad2,#8b93e8); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; color:#fff; margin-right:8px; vertical-align:middle; }
@@ -1252,7 +1254,7 @@ async function loadCompanies() {
     const companies = data.companies || [];
     const tbody = document.getElementById('companiesTableBody');
     tbody.innerHTML = companies.map(c =>
-      '<tr style="cursor:pointer" onclick="openCompanyDetail(' + JSON.stringify(c.name) + ')"><td>'+esc(c.name)+'</td><td>'+esc(c.count)+'</td></tr>').join('');
+      '<tr style="cursor:pointer" onclick="openCompanyDetail(' + JSON.stringify(c.name) + ')" class="company-row"><td><span style="margin-right:6px">🏢</span>'+esc(c.name)+' <span style="color:var(--text-muted);font-size:11px">›</span></td><td>'+esc(c.count)+'</td></tr>').join('');
     if (!companies.length) tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text-muted)">No companies.</td></tr>';
     const counter = document.getElementById('companiesCounter');
     if (counter) counter.textContent = companies.length + ' of ' + (data.total || companies.length);
