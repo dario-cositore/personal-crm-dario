@@ -173,8 +173,7 @@ describe("provider package entrypoints", () => {
     }
   })
 
-  test("maps OpenRouter and xAI package settings onto executable models", async () => {
-    const OpenRouter = await import("@elitza/ai/providers/openrouter")
+  test("maps xAI package settings onto executable models", async () => {
     const XAI = await import("@elitza/ai/providers/xai")
     const settings = {
       apiKey: "fixture",
@@ -182,21 +181,14 @@ describe("provider package entrypoints", () => {
       headers: { "x-application": "opencode" },
       body: { service_tier: "priority" },
     }
-    const openrouter = OpenRouter.model("anthropic/claude-sonnet-4", {
-      ...settings,
-      usage: true,
-    })
     const xai = XAI.model("grok-4", {
       ...settings,
       reasoningEffort: "high",
     })
 
-    for (const selected of [openrouter, xai]) {
-      expect(selected.route.endpoint.baseURL).toBe(settings.baseURL)
-      expect(selected.route.defaults.headers).toEqual(settings.headers)
-      expect(selected.route.defaults.http?.body).toEqual(settings.body)
-    }
-    expect(openrouter.route.defaults.providerOptions).toEqual({ usage: true })
+    expect(xai.route.endpoint.baseURL).toBe(settings.baseURL)
+    expect(xai.route.defaults.headers).toEqual(settings.headers)
+    expect(xai.route.defaults.http?.body).toEqual(settings.body)
     expect(xai.route.defaults.providerOptions).toMatchObject({ reasoningEffort: "high", store: false })
   })
 

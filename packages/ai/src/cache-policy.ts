@@ -51,16 +51,15 @@ const RESPECTS_INLINE_HINTS = new Set([
   "vercel-ai-gateway-messages",
   "zai-coding-messages",
   "bedrock-converse",
-  "openrouter",
   "digitalocean",
 ])
 
-// OpenRouter and Vercel AI Gateway upstreams other than Anthropic and Alibaba Qwen cache without breakpoints.
+// Vercel AI Gateway upstreams other than Anthropic and Alibaba Qwen cache without breakpoints.
 // Gemini uses only the last breakpoint, so a conversation-tail breakpoint writes a new cache every step and costs
 // more than none. Qwen ignores breakpoints on tool definitions and caches tools with the system prompt.
 const QWEN: CachePolicyObject = { system: true, messages: { tail: 1 } }
 const gatewayPolicy = (modelID: string): CachePolicyObject => {
-  // `~anthropic/claude-sonnet-latest` style IDs are OpenRouter aliases for the latest model in a family.
+  // `~anthropic/claude-sonnet-latest` style IDs are gateway aliases for the latest model in a family.
   const id = modelID.replace(/^~/, "")
   if (id.startsWith("anthropic/")) return AUTO
   if (id.startsWith("qwen/") || id.startsWith("alibaba/qwen")) return QWEN
@@ -193,7 +192,7 @@ const selectPolicy = (request: LLMRequest): CachePolicyObject => {
   if (format === "anthropic") return resolve(request.cache)
   if (!RESPECTS_INLINE_HINTS.has(route)) return NONE
   if (!auto) return resolve(request.cache)
-  if (route === "openrouter" || route === "vercel-ai-gateway-messages") return gatewayPolicy(request.model.id)
+  if (route === "vercel-ai-gateway-messages") return gatewayPolicy(request.model.id)
   if (route === "alibaba-chat") return request.model.id.toLowerCase().startsWith("qwen") ? QWEN : NONE
   return AUTO
 }

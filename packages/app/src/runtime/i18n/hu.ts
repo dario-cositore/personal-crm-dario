@@ -150,7 +150,6 @@ export const dict = {
   "dialog.provider.copilot.note": "AI modellek a kódoláshoz a GitHub Copilot segítségével",
   "dialog.provider.openai.note": "GPT modellek a gyors, általános AI-feladatokhoz",
   "dialog.provider.google.note": "Gemini modellek a gyors, strukturált válaszokhoz",
-  "dialog.provider.openrouter.note": "Hozzáférés az összes támogatott modellhez egy szolgáltatótól",
   "dialog.provider.vercel.note": "Egységes hozzáférés az AI modellekhez intelligens útválasztással",
   "dialog.model.select.title": "Válasszon modellt",
   "dialog.model.search.placeholder": "Modellek keresése",

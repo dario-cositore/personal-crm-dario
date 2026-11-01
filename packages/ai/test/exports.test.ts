@@ -37,7 +37,6 @@ import {
   OpenCode,
   OpenAI,
   OpenAICompatible,
-  OpenRouter,
   Replicate,
   Runway,
   Stability,
@@ -146,8 +145,6 @@ describe("public exports", () => {
     expect(CloudflareAIGateway.configure({ accountId: "fixture", gatewayApiKey: "fixture" }).model).toBeFunction()
     expect(CloudflareWorkersAI.configure).toBeFunction()
     expect(CloudflareWorkersAI.configure({ accountId: "fixture", apiKey: "fixture" }).model).toBeFunction()
-    expect(OpenRouter.model).toBeFunction()
-    expect(OpenRouter.experimental.evaluation).toBeFunction()
     expect(TypeSafeAI.experimental.evaluation).toBeFunction()
     expect(OpenCode.experimental.evaluation).toBeFunction()
     expect(VercelAIGateway.experimental.evaluation).toBeFunction()

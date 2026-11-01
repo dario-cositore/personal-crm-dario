@@ -105,6 +105,7 @@ export interface ScoutResult {
   businesses: ScoutedBusiness[]
   meta: { sources_used: string[] }
   error?: string
+  run_id?: number
 }
 
 interface OverpassElement {

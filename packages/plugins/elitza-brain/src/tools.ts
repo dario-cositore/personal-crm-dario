@@ -13,9 +13,16 @@
 import { doctorCheck, doctorHistory, doctorRepair } from "./doctor.js"
 
 import { configSection, validateConfig } from "./configview.js"
-import { getLearningStats } from "./learning.js"
 import { ensureKnowledge, readPlaybook } from "./knowledge.js"
-import { generateHandover } from "./handover.js"
+import path from "node:path"
+import { generateHandover, verifyHandover } from "./handover.js"
+import { listVerticals, getVertical, getActiveVertical, setActiveVertical, seedVerticals } from "./verticals.js"
+import { ELITZA_HOME } from "./db.js"
+import { getPersonality } from "./soul.js"
+import { issue, verifyToken, delegate, revoke, listIssued, listRevoked, covers, attachSession, detachSession, getSessionCapability } from "./capability.js"
+import { addTrigger, listTriggers, setTriggerStatus, deleteTrigger, processTriggers } from "./crm.js"
+import { setCustomField, getCustomFields, deleteCustomField, addDeal, updateDeal, listDeals, deleteDeal, addTag, removeTag, listTags, allTags, logAudit, listAudit, costSummary, exportClientsCSV, importClientsCSV, connectCloud, disconnectCloud, listCloudAccounts, continuousBackupStream, uploadBackupToCloud, revenueStats, weeklyDigest } from "./crm.js"
+import { listTemplates, getTemplate, seedTemplates, instantiateTemplate } from "./templates.js"
 import {
   getMetamemory,
   listProceduralSkills,
@@ -24,6 +31,7 @@ import {
   memoryForget,
   memorySearch,
   memoryStats,
+  getLearningStats,
 } from "./memory.js"
 import { pollPipeline, querySignals } from "./pipeline.js"
 import {
@@ -40,6 +48,7 @@ import {
 } from "./crm.js"
 import { scoutBusinesses, discoverEmail } from "./scouting.js"
 import { enrichClient } from "./enrichment.js"
+import { listWorksheets, recommendWorksheets, pullWorksheet, alreadyPulled, type Worksheet } from "./worksheets.js"
 import {
   addToPipeline,
   approveDrafts,
@@ -49,6 +58,7 @@ import {
   queueFollowups,
   sendApproved,
   sweepExhausted,
+  variantStats,
   writeDraft,
 } from "./outreach.js"
 import {
@@ -60,8 +70,6 @@ import {
   scheduleCall,
 } from "./production.js"
 import { persistenceStats, recentSessions, searchMessages } from "./sessions.js"
-import { getPersonality } from "./soul.js"
-import { runRemoteViewing } from "./remoteview.js"
 import {
   abandonTask,
   blockTask,
@@ -155,9 +163,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
         return {
           content: memoryCreate(
             input.content,
-            input.memory_type ?? "episodic",
-            input.importance ?? 0.7,
-            tags,
+            { memoryType: input.memory_type ?? "episodic", importance: input.importance ?? 0.7, tags },
           ),
         }
       },
@@ -440,7 +446,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
             properties: {
               action: {
                 type: "string",
-                enum: ["add", "search", "get", "update", "log", "interactions", "asset", "assets", "find_email"],
+                enum: ["add", "search", "get", "update", "log", "interactions", "asset", "assets", "find_email", "custom_field", "deal", "tag", "audit", "tags"],
                 description: "Which operation to run.",
               },
               id: { type: "integer", description: "Client id, for every operation except add and search." },
@@ -469,6 +475,15 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               subject: { type: "string" },
               body: { type: "string" },
               path: { type: "string", description: "File path for an asset." },
+              key: { type: "string", description: "Custom field key (custom_field)." },
+              value: { type: "string", description: "Custom field value (custom_field)." },
+              title: { type: "string", description: "Deal title (deal)." },
+              deal_value2: { type: "integer", description: "Deal value in euros (deal)." },
+              probability: { type: "integer", description: "Deal probability 0-100 (deal)." },
+              close_date: { type: "string", description: "Deal close date ISO (deal)." },
+              tag: { type: "string", description: "Tag name (tag)." },
+              deal_id: { type: "integer", description: "Deal id (deal update/delete)." },
+              entity: { type: "string", description: "Audit entity filter." },
             },
             required: ["action"],
           },
@@ -627,9 +642,60 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               updateClient(clientID(), { email })
               return { content: `${client.name} → ${email} (stored, never printed elsewhere)` }
             }
+            case "custom_field": {
+              const client = getClient(clientID())
+              if (!client) return { content: `No client with id ${clientID()}.` }
+              if (op.key && op.value !== undefined) {
+                setCustomField(clientID(), String(op.key), String(op.value))
+                return { content: `Set ${op.key} = ${op.value} for ${client.name}.` }
+              }
+              if (op.key && op.value === undefined) {
+                deleteCustomField(clientID(), String(op.key))
+                return { content: `Removed custom field ${op.key} from ${client.name}.` }
+              }
+              const fields = getCustomFields(clientID())
+              const lines = Object.entries(fields).map(([k, v]) => `${k}: ${v}`)
+              return { content: lines.length ? lines.join("\\n") : "No custom fields." }
+            }
+            case "deal": {
+              const sub = String(op.sub ?? op.deal_action ?? "list")
+              if (sub === "add") {
+                const deal = addDeal(clientID(), { title: String(op.title ?? "Deal"), stage: op.stage ? String(op.stage) : undefined, value: op.deal_value2 !== undefined ? Number(op.deal_value2) : (op.value !== undefined ? Number(op.value) : undefined), probability: op.probability !== undefined ? Number(op.probability) : undefined, close_date: op.close_date ? String(op.close_date) : undefined, notes: op.notes ? String(op.notes) : undefined })
+                return { content: `Created deal #${deal.id}: ${deal.title} [${deal.stage}]` }
+              }
+              if (sub === "update" && op.deal_id !== undefined) {
+                const deal = updateDeal(Number(op.deal_id), { title: op.title ? String(op.title) : undefined, stage: op.stage ? String(op.stage) : undefined, value: op.deal_value2 !== undefined ? Number(op.deal_value2) : (op.value !== undefined ? Number(op.value) : undefined), probability: op.probability !== undefined ? Number(op.probability) : undefined, close_date: op.close_date ? String(op.close_date) : undefined, notes: op.notes ? String(op.notes) : undefined })
+                if (!deal) return { content: `No deal with id ${op.deal_id}.` }
+                return { content: `Updated deal #${deal.id}: ${deal.title} [${deal.stage}]` }
+              }
+              if (sub === "delete" && op.deal_id !== undefined) {
+                deleteDeal(Number(op.deal_id))
+                return { content: `Deleted deal #${op.deal_id}.` }
+              }
+              const deals = listDeals(clientID() || undefined)
+              if (!deals.length) return { content: "No deals." }
+              return { content: deals.map((d) => `#${d.id} ${d.title} [${d.stage}] ${d.value ?? ""} ${d.currency} prob ${d.probability ?? "-"}% close ${d.close_date ?? "-"}`).join("\\n") }
+            }
+            case "tag": {
+              if (op.tag) {
+                if (op.remove) { removeTag(clientID(), String(op.tag)); return { content: `Removed tag ${op.tag} from client ${clientID()}.` } }
+                addTag(clientID(), String(op.tag))
+                return { content: `Tagged client ${clientID()} with ${op.tag}.` }
+              }
+              const tags = listTags(clientID())
+              return { content: tags.length ? tags.join(", ") : "No tags." }
+            }
+            case "tags": {
+              return { content: allTags().length ? allTags().join(", ") : "No tags in use." }
+            }
+            case "audit": {
+              const rows = listAudit(op.entity ? String(op.entity) : undefined, op.id !== undefined ? Number(op.id) : undefined, op.limit !== undefined ? Number(op.limit) : 50)
+              if (!rows.length) return { content: "No audit entries." }
+              return { content: rows.map((r) => `#${r.id} ${r.created_at} ${r.entity}#${r.entity_id} ${r.action} by ${r.actor}${r.diff ? " " + r.diff.slice(0, 120) : ""}`).join("\\n") }
+            }
             default:
               return {
-                content: `Unknown crm action "${action}". Use one of: add, search, get, update, log, interactions, asset, assets, find_email.`,
+                content: `Unknown crm action "${action}". Use one of: add, search, get, update, log, interactions, asset, assets, find_email, custom_field, deal, tag, tags, audit.`,
               }
           }
         } catch (error) {
@@ -650,7 +716,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
             properties: {
               action: {
                 type: "string",
-                enum: ["add", "list", "draft", "approve", "send", "due", "queue", "dispose", "sweep"],
+                enum: ["add", "list", "draft", "approve", "send", "due", "queue", "dispose", "sweep", "variants"],
                 description: "Which operation to run.",
               },
               client_id: { type: "integer", description: "Client id, for add and draft." },
@@ -666,6 +732,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 type: "string",
                 description: "Email body in your voice: short, concrete, no marketing fluff, one ask. The opt-out footer is appended automatically.",
               },
+              variant: { type: "string", description: "A/B variant label for this draft (optional)." },
               verdict: {
                 type: "string",
                 enum: ["yes", "no", "stale"],
@@ -709,6 +776,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               const { filePath, row: pipelineRow } = writeDraft(Number(op.client_id), {
                 subject: String(op.subject ?? ""),
                 body: String(op.body ?? ""),
+                variant: op.variant !== undefined ? String(op.variant) : undefined,
               })
               return {
                 content: `Drafted touch ${pipelineRow.touch + 1} for client ${op.client_id}: ${filePath}\nNothing sent — read it, edit it if you want, then approve with outreach approve.`,
@@ -778,9 +846,14 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                   .join(", ")}. They stay in the CRM for newsletter and nurture.`,
               }
             }
+            case "variants": {
+              const stats = variantStats()
+              if (!stats.length) return { content: "No variant data yet." }
+              return { content: stats.map((s) => `${s.variant}: sent ${s.sent}, converted ${s.replied} (${(s.conversion * 100).toFixed(1)}%)`).join("\\n") }
+            }
             default:
               return {
-                content: `Unknown outreach action "${action}". Use one of: add, list, draft, approve, send, due, queue, dispose, sweep.`,
+                content: `Unknown outreach action "${action}". Use one of: add, list, draft, approve, send, due, queue, dispose, sweep, variants.`,
               }
           }
         } catch (error) {
@@ -795,13 +868,21 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       input: {
         type: "object",
         properties: {
+          action: { type: "string", enum: ["generate", "verify"], description: "generate (default) writes a signed handover; verify checks a signed handover." },
           repo: { type: "string", description: "Repository or folder inside one. Defaults to the working directory." },
           client_id: { type: "integer", description: "CRM client this delivery belongs to." },
           out: { type: "string", description: "Where to write. Defaults to CLIENT_SOP_HANDOVER.md at the repo root." },
+          file: { type: "string", description: "Path to a handover file to verify (verify action)." },
         },
       },
       execute: async (input) => {
         try {
+          const action = String(input.action ?? "generate")
+          if (action === "verify") {
+            const target = String(input.file ?? input.out ?? path.join(process.cwd(), "CLIENT_SOP_HANDOVER.md"))
+            const result = verifyHandover(target)
+            return { content: result }
+          }
           const result = generateHandover({
             repo: String(input.repo ?? process.cwd()),
             out: input.out !== undefined ? String(input.out) : undefined,
@@ -812,12 +893,366 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               `Wrote ${result.path}`,
               `${result.commits} commit(s) referenced, ${result.env_vars.length} environment variable name(s) listed.`,
               `Sections: ${result.sections.join(", ")}.`,
+              `Signed: yes (Ed25519). Sidecar: ${result.signature_path}`,
               "Names only — no secret value is ever written into it.",
             ].join("\n"),
           }
         } catch (error) {
           return { content: `Handover error: ${String(error)}` }
         }
+      },
+    },
+    {
+      name: "vertical",
+      description:
+        "Industry vertical packs: scout queries, scoring weights, outreach voice, env-var checklist and playbooks for a niche (farming, trades, ...). Operations: list (what is installed), show <name>, use <name> (set active vertical), seed (write missing curated packs). Active vertical is injected into your context.",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["list", "show", "use", "seed"], description: "Operation." },
+          name: { type: "string", description: "Vertical name (show/use)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "seed") {
+            const seeded = seedVerticals()
+            return { content: seeded.length ? `Seeded: ${seeded.join(", ")}` : "All curated verticals already present." }
+          }
+          if (op === "list") {
+            const names = listVerticals()
+            const active = getActiveVertical()
+            const lines = names.map((n: string) => `${n === active ? "*" : " "} ${n}${n === active ? " (active)" : ""}`)
+            return { content: names.length ? `Verticals:\\n${lines.join("\\n")}` : "No verticals installed. Run vertical seed." }
+          }
+          if (op === "show") {
+            const v = getVertical(String(input.name ?? ""))
+            if (!v) return { content: `Unknown vertical: ${input.name}` }
+            return { content: JSON.stringify(v, null, 2) }
+          }
+          if (op === "use") {
+            const ok = setActiveVertical(String(input.name ?? ""))
+            return { content: ok ? `Active vertical set to ${input.name}` : `Unknown vertical: ${input.name}` }
+          }
+          return { content: `Unknown operation: ${op}` }
+        } catch (error) {
+          return { content: `Vertical error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "template",
+      description:
+        "Automation template registry: reusable deliverables (webhooks, email sequences, scripts). Operations: list, show <name>, seed (write missing curated templates), use <name> with client_id (instantiate into a per-client deliverable folder, substitute placeholders, register as CRM asset).",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["list", "show", "seed", "use"], description: "Operation." },
+          name: { type: "string", description: "Template name (show/use)." },
+          client_id: { type: "integer", description: "CRM client id (use)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "seed") {
+            const seeded = seedTemplates()
+            return { content: seeded.length ? `Seeded: ${seeded.join(", ")}` : "All curated templates already present." }
+          }
+          if (op === "list") {
+            const names = listTemplates()
+            return { content: names.length ? `Templates:\\n${names.join("\\n")}` : "No templates installed. Run template seed." }
+          }
+          if (op === "show") {
+            const t = getTemplate(String(input.name ?? ""))
+            if (!t) return { content: `Unknown template: ${input.name}` }
+            return { content: JSON.stringify(t, null, 2) }
+          }
+          if (op === "use") {
+            const res = instantiateTemplate(String(input.name ?? ""), Number(input.client_id))
+            if (!res) return { content: `Could not instantiate ${input.name} for client ${input.client_id}.` }
+            return { content: `Instantiated ${input.name} into ${res.dir}\\nFiles: ${res.files.join(", ")}\\nRegistered as CRM asset.` }
+          }
+          return { content: `Unknown operation: ${op}` }
+        } catch (error) {
+          return { content: `Template error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "trigger",
+      description:
+        "Triggered email engine: event-driven touches beyond the fixed cadence. Operations: list (all or client_id), add (client_id, name, event, subject, body, cooldown_days), pause <id>, delete <id>, run (evaluate all active triggers now, writing drafts for approval). Events: stage_is:<status>, days_in_stage:<status>:<n>, days_after_handover:<n>.",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["list", "add", "pause", "delete", "run"], description: "Operation." },
+          client_id: { type: "integer", description: "CRM client id (list/add)." },
+          id: { type: "integer", description: "Trigger id (pause/delete)." },
+          name: { type: "string", description: "Trigger name (add)." },
+          event: { type: "string", description: "Event condition (add)." },
+          subject: { type: "string", description: "Email subject (add)." },
+          body: { type: "string", description: "Email body (add)." },
+          cooldown_days: { type: "integer", description: "Cooldown days (add)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "run") {
+            const r = processTriggers()
+            return { content: `Processed triggers: ${r.checked} checked, ${r.fired} fired (drafts written for approval).` }
+          }
+          if (op === "list") {
+            const ts = listTriggers(input.client_id !== undefined ? Number(input.client_id) : undefined)
+            if (!ts.length) return { content: "No triggers." }
+            return { content: ts.map((t) => `#${t.id} client ${t.client_id} [${t.status}] ${t.name} — ${t.event}`).join("\\n") }
+          }
+          if (op === "add") {
+            const t = addTrigger(Number(input.client_id), {
+              name: String(input.name ?? "trigger"),
+              event: String(input.event ?? ""),
+              subject: String(input.subject ?? ""),
+              body: String(input.body ?? ""),
+              cooldown_days: input.cooldown_days !== undefined ? Number(input.cooldown_days) : 0,
+            })
+            return { content: `Created trigger #${t.id} for client ${t.client_id}.` }
+          }
+          if (op === "pause") {
+            setTriggerStatus(Number(input.id), "paused")
+            return { content: `Paused trigger #${input.id}.` }
+          }
+          if (op === "delete") {
+            deleteTrigger(Number(input.id))
+            return { content: `Deleted trigger #${input.id}.` }
+          }
+          return { content: `Unknown operation: ${op}` }
+        } catch (error) {
+          return { content: `Trigger error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "capability",
+      description:
+        "Capability tokens (UCAN-inspired): scoped, expiring, delegatable, revocable grants signed with Elitza's Ed25519 key. Operations: mint (audience, capabilities [{action,resource}], expiry_minutes, delegatable), verify (token, expected_audience), delegate (parent_token, audience, capabilities, expiry_minutes), revoke (nonce), list, revoked. Use to scope sub-agent permissions.",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["mint", "verify", "delegate", "revoke", "list", "revoked", "attach", "detach", "session"], description: "Operation." },
+          audience: { type: "string", description: "Audience agent/session id (mint/delegate)." },
+          capabilities: { type: "array", description: "Array of {action, resource} (mint/delegate)." },
+          expiry_minutes: { type: "integer", description: "Expiry in minutes (mint/delegate)." },
+          delegatable: { type: "boolean", description: "Whether the token can be delegated (mint/delegate)." },
+          token: { type: "string", description: "Token (verify/delegate)." },
+          parent_token: { type: "string", description: "Parent token (delegate)." },
+          nonce: { type: "string", description: "Nonce to revoke (revoke)." },
+          expected_audience: { type: "string", description: "Expected audience (verify)." },
+          session_id: { type: "string", description: "Session id (attach/detach/session)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "mint") {
+            const caps = (input.capabilities ?? []) as { action: string; resource: string }[]
+            const tok = issue({ audience: String(input.audience ?? ""), capabilities: caps, expiryMinutes: input.expiry_minutes !== undefined ? Number(input.expiry_minutes) : 60, delegatable: Boolean(input.delegatable) })
+            return { content: `Minted capability token:\\n${tok}` }
+          }
+          if (op === "verify") {
+            const r = verifyToken(String(input.token ?? ""), input.expected_audience ? String(input.expected_audience) : undefined)
+            return { content: r.ok ? `VALID\\n${JSON.stringify(r.claims, null, 2)}` : `INVALID: ${r.reason}` }
+          }
+          if (op === "delegate") {
+            const tok = delegate(String(input.parent_token ?? ""), { audience: String(input.audience ?? ""), capabilities: (input.capabilities ?? []) as { action: string; resource: string }[], expiryMinutes: input.expiry_minutes !== undefined ? Number(input.expiry_minutes) : 30, delegatable: Boolean(input.delegatable) })
+            if (!tok) return { content: "Delegation failed (parent not delegatable, subset violation, or expired)." }
+            return { content: `Delegated token:\\n${tok}` }
+          }
+          if (op === "revoke") {
+            revoke(String(input.nonce ?? ""))
+            return { content: `Revoked nonce ${input.nonce}.` }
+          }
+          if (op === "list") {
+            const issued = listIssued()
+            return { content: issued.length ? issued.map((c) => `${c.nonce} aud=${c.aud} exp=${c.exp} caps=${c.cap.map((x) => x.action + ":" + x.resource).join(",")}`).join("\\n") : "No tokens issued." }
+          }
+          if (op === "revoked") {
+            const r = listRevoked()
+            return { content: r.length ? r.join("\\n") : "No revoked tokens." }
+          }
+          if (op === "attach") {
+            attachSession(String(input.session_id ?? ""), String(input.token ?? ""))
+            return { content: `Attached capability token to session ${input.session_id}.` }
+          }
+          if (op === "detach") {
+            detachSession(String(input.session_id ?? ""))
+            return { content: `Detached capability token from session ${input.session_id}.` }
+          }
+          if (op === "session") {
+            const t = getSessionCapability(String(input.session_id ?? ""))
+            return { content: t ? t : "No capability token attached to this session." }
+          }
+          return { content: `Unknown operation: ${op}` }
+        } catch (error) {
+          return { content: `Capability error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "backup",
+      description:
+        "Back up Elitza's whole home (~/.elitza) to a tar.gz. Operations: create (optional out path), list (show last backups in ~/). Restore is manual: extract the archive over ~/.elitza after stopping the engine.",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["create", "list"], description: "Operation." },
+          out: { type: "string", description: "Output path (create)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "list") {
+            const home = process.env.HOME ?? ""
+            const entries = (await import("node:fs")).readdirSync(home).filter((f: string) => f.startsWith("elitza-backup-"))
+            return { content: entries.length ? entries.join("\\n") : "No backups found in home." }
+          }
+          const out = String(input.out ?? `${process.env.HOME}/elitza-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`)
+          const result = Bun.spawnSync(["tar", "-czf", out, "-C", process.env.HOME ?? "", ".elitza"], { stdout: "pipe", stderr: "pipe" })
+          if (result.exitCode !== 0) {
+            return { content: `Backup failed: ${new TextDecoder().decode(result.stderr)}` }
+          }
+          return { content: `Backup written to ${out}` }
+        } catch (error) {
+          return { content: `Backup error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "cost",
+      description: "Turn cost summary over the last N days (default 7): sessions, input/output tokens, total USD.",
+      input: {
+        type: "object",
+        properties: {
+          days: { type: "integer", description: "Lookback days (default 7)." },
+        },
+      },
+      execute: async (input) => {
+        try {
+          const s = costSummary(input.days !== undefined ? Number(input.days) : 7)
+          return { content: `Last ${input.days ?? 7} days: ${s.sessions} turns, ${s.input_tokens} input tokens, ${s.output_tokens} output tokens, $${s.cost_usd.toFixed(4)} total.` }
+        } catch (error) {
+          return { content: `Cost error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "csv",
+      description: "CSV import/export for clients. Operations: export (returns CSV text), import (csv text).",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["export", "import"], description: "Operation." },
+          csv: { type: "string", description: "CSV text (import)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "export") return { content: exportClientsCSV() }
+          const r = importClientsCSV(String(input.csv ?? ""))
+          return { content: `Imported ${r.imported}, skipped ${r.skipped}.` }
+        } catch (error) {
+          return { content: `CSV error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "cloud",
+      description:
+        "Cloud storage (Google Drive/Dropbox/OneDrive) for continuous backup sync. Operations: connect (provider, access_token, refresh_token?, label), disconnect (id), list, sync (create backup + upload to all connected accounts), upload (account_id, file).",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["connect", "disconnect", "list", "sync", "upload"], description: "Operation." },
+          provider: { type: "string", enum: ["google", "gdrive", "dropbox", "onedrive"], description: "Provider (connect)." },
+          access_token: { type: "string", description: "Access token (connect)." },
+          refresh_token: { type: "string", description: "Refresh token (connect)." },
+          label: { type: "string", description: "Account label (connect)." },
+          id: { type: "integer", description: "Account id (disconnect)." },
+          account_id: { type: "integer", description: "Account id (upload)." },
+          file: { type: "string", description: "File path (upload)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        try {
+          const op = String(input.operation)
+          if (op === "connect") {
+            const acc = connectCloud(String(input.provider ?? ""), String(input.access_token ?? ""), input.refresh_token ? String(input.refresh_token) : undefined, input.label ? String(input.label) : undefined)
+            return { content: `Connected ${acc.provider} account #${acc.id} (${acc.account_label}).` }
+          }
+          if (op === "disconnect") {
+            disconnectCloud(Number(input.id))
+            return { content: `Disconnected account #${input.id}.` }
+          }
+          if (op === "list") {
+            const accs = listCloudAccounts()
+            if (!accs.length) return { content: "No cloud accounts connected." }
+            return { content: accs.map((a) => `#${a.id} ${a.provider} [${a.status}] last_sync=${a.last_sync ?? "never"}${a.last_error ? " err=" + a.last_error : ""}`).join("\\n") }
+          }
+          if (op === "sync") {
+            const r = await continuousBackupStream()
+            return { content: `Backup created: ${r.created}\\nUploaded to ${r.uploaded} account(s).${r.errors.length ? "\\nErrors: " + r.errors.join("; ") : ""}` }
+          }
+          if (op === "upload") {
+            const r = await uploadBackupToCloud(Number(input.account_id), String(input.file ?? ""))
+            return { content: r.ok ? `Uploaded to account #${input.account_id}.` : `Upload failed: ${r.error}` }
+          }
+          return { content: `Unknown operation: ${op}` }
+        } catch (error) {
+          return { content: `Cloud error: ${String(error)}` }
+        }
+      },
+    },
+    {
+      name: "revenue",
+      description: "Revenue dashboard: pipeline value, won value, conversion rate, avg deal, MRR estimate, by-status and by-month breakdown.",
+      input: { type: "object", properties: {} },
+      execute: async () => {
+        try {
+          const r = revenueStats()
+          const lines = [
+            `Pipeline value: EUR ${r.pipeline_value}`,
+            `Won value: EUR ${r.won_value}`,
+            `Conversion: ${(r.conversion_rate * 100).toFixed(1)}% (${r.clients_won}/${r.clients_total})`,
+            `Avg deal: EUR ${r.avg_deal_value}`,
+            `MRR estimate: EUR ${r.mrr_estimate}`,
+            `Open deals: ${r.open_deals}, Won deals: ${r.won_deals}`,
+            "",
+            "By status:",
+            ...r.by_status.map((s) => `  ${s.status}: ${s.count} (EUR ${s.value})`),
+            "",
+            "By month (won):",
+            ...r.by_month.map((m) => `  ${m.month}: ${m.count} deals, EUR ${m.value}`),
+          ]
+          return { content: lines.join("\\n") }
+        } catch (error) { return { content: `Revenue error: ${String(error)}` } }
+      },
+    },
+    {
+      name: "digest",
+      description: "Generate a weekly digest markdown (pipeline, due actions, deals).",
+      input: { type: "object", properties: {} },
+      execute: async () => {
+        try { return { content: weeklyDigest() } } catch (error) { return { content: `Digest error: ${String(error)}` } }
       },
     },
     {
@@ -970,6 +1405,70 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       },
     },
     {
+      name: "worksheets",
+      description:
+        "Internal CRM worksheet library: interactive, fillable templates pulled into a client's record. Operations: list (all available worksheets with tags), recommend (client_id — best-fit worksheets for that client), pull (client_id, worksheet_id — copy the worksheet into the client's pipeline folder and attach it as a 'worksheet' asset), pulled (client_id — worksheets already attached). Internal only, never sent to the client.",
+      input: {
+        type: "object",
+        properties: {
+          operation: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["list", "recommend", "pull", "pulled"], description: "Which operation." },
+              client_id: { type: "integer", description: "CRM client id." },
+              worksheet_id: { type: "string", description: "Worksheet id from list/recommend." },
+              limit: { type: "integer", description: "Max results (default 3)." },
+            },
+            required: ["action"],
+          },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        const op = (input.operation ?? {}) as Record<string, any>
+        const action = String(op.action ?? "")
+        try {
+          switch (action) {
+            case "list": {
+              const ws = listWorksheets()
+              if (!ws.length) return { content: "No worksheets available." }
+              return {
+                content: ws
+                  .map((w) => `${w.id} — ${w.title}${w.available ? "" : " (missing on disk)"} [${w.tags.join(", ")}]`)
+                  .join("\n"),
+              }
+            }
+            case "recommend": {
+              const client = getClient(Number(op.client_id))
+              if (!client) return { content: `No client with id ${op.client_id}.` }
+              const recs = recommendWorksheets(client, Number(op.limit ?? 3))
+              if (!recs.length) return { content: `No worksheets recommended for ${client.name}.` }
+              return {
+                content: recs
+                  .map((w) => `${w.id} — ${w.title} [${w.tags.join(", ")}]${alreadyPulled(client.id, w.id) ? " (already pulled)" : ""}`)
+                  .join("\n"),
+              }
+            }
+            case "pull": {
+              const res = pullWorksheet(Number(op.client_id), String(op.worksheet_id ?? ""))
+              return { content: `Pulled ${res.worksheet.title} for client ${op.client_id} → ${res.path} (asset ${res.asset_id}).` }
+            }
+            case "pulled": {
+              const client = getClient(Number(op.client_id))
+              if (!client) return { content: `No client with id ${op.client_id}.` }
+              const assets = listAssets(client.id).filter((a) => a.kind === "worksheet")
+              if (!assets.length) return { content: `No worksheets pulled for ${client.name}.` }
+              return { content: assets.map((a) => `${a.id}. ${a.name}${a.path ? ` ${a.path}` : ""}`).join("\n") }
+            }
+            default:
+              return { content: `Unknown worksheets action "${action}". Use one of: list, recommend, pull, pulled.` }
+          }
+        } catch (error) {
+          return { content: `Worksheets error: ${String(error)}` }
+        }
+      },
+    },
+    {
       name: "enrich_client",
       description:
         "Enrich a CRM client by scouting their own website: fetches the site, extracts contact details, calls MiMo with the diagnosis and proposal playbooks, and writes a one-page diagnosis + fixed-scope proposal (with a recommended price) back into the CRM (notes, interaction, diagnosis.md and proposal.md assets, next action). Use this before drafting a proposal, so you know exactly how to attack. Nothing is sent to the client.",
@@ -1106,54 +1605,6 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       },
     },
   ]
-
-  // Remote Viewing (dual-mind) tool — only when a generate API is available.
-  if (ctx) {
-    tools.push({
-      name: "rv_session",
-      description:
-        "Run a Remote Viewing (dual-mind) session. A Subconscious Engine emits raw sensory 'bits' for a TARGET stimulus and a Conscious Engine filters/qualifies them. Returns the iteration log and a final composite description. Use for impressionistic target description without identifying objects.",
-      input: {
-        type: "object",
-        properties: {
-          coordinate: {
-            type: "string",
-            description: "Session coordinate / target identifier (e.g. '4892-1045'). Optional.",
-          },
-          iterations: {
-            type: "integer",
-            description: "Number of TARGET pulls (default 4, max 7).",
-            default: 4,
-          },
-        },
-      },
-      execute: async (input) => {
-        const coordinate = String(input.coordinate ?? "TARGET")
-        const iterations = Number(input.iterations ?? 4)
-        const result = await runRemoteViewing(
-          async (prompt: string) => {
-            const out = await ctx.generate.text({ prompt })
-            return String((out as { text?: string; data?: { text?: string } }).text ?? (out as { data?: { text?: string } }).data?.text ?? "")
-          },
-          coordinate,
-          iterations,
-        )
-        const lines: string[] = []
-        lines.push(`## Remote Viewing Session — ${result.coordinate}`)
-        lines.push(`Iterations: ${result.iterations}`)
-        lines.push("")
-        for (const it of result.log) {
-          lines.push(`### Iteration ${it.iteration}`)
-          lines.push(`Bits: ${it.bits}`)
-          lines.push(it.conscious)
-          lines.push("")
-        }
-        lines.push("## Final Summary")
-        lines.push(result.summary)
-        return { content: lines.join("\n") }
-      },
-    })
-  }
 
   return tools.map((tool) => ({ ...tool, options: { codemode: false as const } }))
 }

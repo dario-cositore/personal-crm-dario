@@ -71,7 +71,6 @@ const PACKAGES: Readonly<Record<string, string>> = {
   "@ai-sdk/togetherai": "@elitza/ai/providers/togetherai",
   "@ai-sdk/xai": "@elitza/ai/providers/xai",
   "@ai-sdk/gateway": "@elitza/ai/providers/vercel-ai-gateway",
-  "@openrouter/ai-sdk-provider": "@elitza/ai/providers/openrouter",
   "ai-gateway-provider": "@elitza/ai/providers/cloudflare-ai-gateway",
   "venice-ai-sdk-provider": "@elitza/ai/providers/venice",
 }
@@ -159,7 +158,7 @@ type Overlay = {
 
 function options(replacement: string, modelID: string | undefined, settings: Legacy): Overlay {
   const converse = replacement === "@elitza/ai/providers/amazon-bedrock" && modelID !== undefined
-  const kept = Struct.omit(settings, ["headers", "extraBody", "useCompletionUrls", ...OPENROUTER_KEYS])
+  const kept = Struct.omit(settings, ["headers", "extraBody", "useCompletionUrls"])
   const thinking = converse ? bedrockThinking(modelID, settings) : undefined
   return {
     settings: {
@@ -169,7 +168,6 @@ function options(replacement: string, modelID: string | undefined, settings: Leg
     ...(settings.headers === undefined ? {} : { headers: settings.headers }),
     ...(settings.extraBody === undefined ? {} : { body: settings.extraBody }),
     ...(converse ? bedrockRequest(modelID, settings) : {}),
-    ...(replacement === "@elitza/ai/providers/openrouter" ? openRouterRequest(settings) : {}),
   }
 }
 
@@ -255,24 +253,6 @@ function bedrockRequest(modelID: string | undefined, settings: Legacy): Pick<Ove
   return Object.keys(body).length === 0 ? {} : { body }
 }
 
-// Constructor options the native OpenRouter package takes as headers, plus `compatibility`, which the
-// native package would otherwise forward to the request body.
-const OPENROUTER_KEYS = ["appName", "appUrl", "api_keys", "compatibility"] as const
-
-function openRouterRequest(settings: Legacy): Pick<Overlay, "headers"> {
-  const headers =
-    Provider.mergeHeaders(
-      {
-        ...(settings.appName === undefined ? {} : { "X-OpenRouter-Title": settings.appName }),
-        ...(settings.appUrl === undefined ? {} : { "HTTP-Referer": settings.appUrl }),
-        ...(settings.api_keys === undefined || Object.keys(settings.api_keys).length === 0
-          ? {}
-          : { "X-Provider-API-Keys": JSON.stringify(settings.api_keys) }),
-      },
-      settings.headers,
-    ) ?? {}
-  return Object.keys(headers).length === 0 ? {} : { headers }
-}
 
 const lenient = <S extends Schema.Top>(schema: S) =>
   Schema.optional(Schema.UndefinedOr(schema).pipe(Schema.catchDecoding(() => Effect.succeed(Option.some(undefined)))))

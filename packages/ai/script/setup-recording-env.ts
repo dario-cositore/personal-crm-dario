@@ -84,19 +84,6 @@ const PROVIDERS: ReadonlyArray<Provider> = [
     validate: (env) => validateBearer("https://api.groq.com/openai/v1/models", Redacted.make(env.GROQ_API_KEY)),
   },
   {
-    id: "openrouter",
-    label: "OpenRouter",
-    tier: "canary",
-    note: "Router canary for OpenAI-compatible text/tool streaming",
-    vars: [{ name: "OPENROUTER_API_KEY" }],
-    validate: (env) =>
-      validateChat({
-        url: "https://openrouter.ai/api/v1/chat/completions",
-        token: Redacted.make(env.OPENROUTER_API_KEY),
-        model: "openai/gpt-4o-mini",
-      }),
-  },
-  {
     id: "xai",
     label: "xAI",
     tier: "canary",

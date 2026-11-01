@@ -77,7 +77,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot을 통한 코딩 지원용 AI 모델",
   "dialog.provider.openai.note": "빠르고 강력한 범용 AI 작업을 위한 GPT 모델",
   "dialog.provider.google.note": "빠르고 구조화된 응답을 위한 Gemini 모델",
-  "dialog.provider.openrouter.note": "모든 지원 모델을 단일 공급자에서 액세스",
   "dialog.provider.vercel.note": "스마트 라우팅을 통한 AI 모델 통합 액세스",
   "dialog.model.select.title": "모델 선택",
   "dialog.model.search.placeholder": "모델 검색",

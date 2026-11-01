@@ -149,7 +149,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot བརྒྱུད་དེ་ ཀོ་ཌིང་གྲོགས་རམ་གྱི་དོན་ལུ་ AI དཔེ་ཚད།",
   "dialog.provider.openai.note": "GPT མགྱོགས་དྲགས་དང་ལྕོགས་གྲུབ་ཅན་གྱི་སྤྱིར་བཏང་ཨེ་ཨའི་ལས་འགན་ཚུ་གི་དོན་ལུ་དཔེ་ཚད།",
   "dialog.provider.google.note": "Gemini མགྱོགས་དྲགས་དང་སྒྲིག་བཀོད་ཅན་གྱི་ལན་འདེབས་ཀྱི་དཔེ་ཚད།",
-  "dialog.provider.openrouter.note": "བྱིན་མི་གཅིག་ལས་ རྒྱབ་སྐྱོར་འབད་ཡོད་པའི་དཔེ་ཚད་ཚུ་ཆ་མཉམ་འཛུལ་སྤྱོད་འབད།",
   "dialog.provider.vercel.note":
     "རིག་རྩལ་ཅན་གྱི་འགྲུལ་ལམ་དང་གཅིག་ཁར་ བཅོས་མའི་བློ་རིག་དཔེ་ཚད་ཚུ་ལུ་ མཉམ་བསྡོམས་འཛུལ་སྤྱོད་འབད་ནི།",
   "dialog.model.select.title": "དཔེ་ཚད་སེལ་འཐུ་འབད།",

@@ -139,7 +139,6 @@ export const dict = {
   "dialog.provider.copilot.note": "Μοντέλα AI για βοήθεια κωδικοποίησης μέσω GitHub Copilot",
   "dialog.provider.openai.note": "GPT μοντέλα για γρήγορες, ικανές εργασίες γενικής τεχνητής νοημοσύνης",
   "dialog.provider.google.note": "Gemini μοντέλα για γρήγορες, δομημένες απαντήσεις",
-  "dialog.provider.openrouter.note": "Πρόσβαση σε όλα τα υποστηριζόμενα μοντέλα από έναν πάροχο",
   "dialog.provider.vercel.note": "Ενοποιημένη πρόσβαση σε μοντέλα τεχνητής νοημοσύνης με έξυπνη δρομολόγηση",
   "dialog.model.select.title": "Επιλογή μοντέλου",
   "dialog.model.search.placeholder": "Αναζήτηση μοντέλων",

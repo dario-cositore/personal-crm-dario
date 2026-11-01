@@ -24,7 +24,6 @@ import {
   OpenAI,
   OpenAICompatible,
   OpenAICompatibleResponses,
-  OpenRouter,
   TogetherAI,
   XAI,
 } from "../../src/providers/index.js"
@@ -69,7 +68,6 @@ describe("native OpenAI-compatible providers", () => {
       [TogetherAI.configure({ apiKey: "test" }).model("model"), "togetherai"],
       [CloudflareAIGateway.configure({ accountId: "account" }).model("model"), "cloudflare-ai-gateway"],
       [CloudflareWorkersAI.configure({ accountId: "account" }).model("model"), "cloudflare-workers-ai"],
-      [OpenRouter.configure({ apiKey: "test" }).model("model"), "openrouter"],
       [XAI.configure({ apiKey: "test" }).chat("model"), "xai"],
       [XAI.configure({ apiKey: "test" }).responses("model"), "xai"],
     ] as const

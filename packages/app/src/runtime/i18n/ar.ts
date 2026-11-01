@@ -143,7 +143,6 @@ export const dict = {
   "dialog.provider.copilot.note": "نماذج ذكاء اصطناعي للمساعدة في البرمجة عبر GitHub Copilot",
   "dialog.provider.openai.note": "نماذج GPT لمهام الذكاء الاصطناعي العامة السريعة والمتقدمة",
   "dialog.provider.google.note": "نماذج Gemini لاستجابات سريعة ومنظمة",
-  "dialog.provider.openrouter.note": "الوصول إلى جميع النماذج المدعومة من موفر واحد",
   "dialog.provider.vercel.note": "وصول موحد إلى نماذج الذكاء الاصطناعي مع توجيه ذكي",
   "dialog.model.select.title": "تحديد نموذج",
   "dialog.model.search.placeholder": "البحث عن نماذج",

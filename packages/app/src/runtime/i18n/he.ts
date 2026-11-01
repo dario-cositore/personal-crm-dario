@@ -138,7 +138,6 @@ export const dict = {
   "dialog.provider.copilot.note": "מודלי AI לסיוע בכתיבת קוד באמצעות GitHub Copilot",
   "dialog.provider.openai.note": "מודלי GPT למשימות AI כלליות, מהירות ומתקדמות",
   "dialog.provider.google.note": "מודלי Gemini לתגובות מהירות ומובנות",
-  "dialog.provider.openrouter.note": "גש לכל המודלים הנתמכים מספק אחד",
   "dialog.provider.vercel.note": "גישה אחידה למודלי AI עם ניתוב חכם",
   "dialog.model.select.title": "בחר מודל",
   "dialog.model.search.placeholder": "חפש מודלים",

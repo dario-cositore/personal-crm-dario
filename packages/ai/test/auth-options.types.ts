@@ -14,7 +14,6 @@ import * as GoogleVertexChat from "../src/providers/google-vertex-chat.js"
 import * as GoogleVertexMessages from "../src/providers/google-vertex-messages.js"
 import * as GoogleVertexResponses from "../src/providers/google-vertex-responses.js"
 import * as OpenAI from "../src/providers/openai.js"
-import * as OpenRouter from "../src/providers/openrouter.js"
 import * as XAI from "../src/providers/xai.js"
 
 type BaseOptions = {
@@ -251,10 +250,6 @@ GoogleVertexMessages.configure({
 AmazonBedrock.configure({ apiKey: "bedrock-key" }).model("anthropic.claude")
 // @ts-expect-error Bedrock model selectors only accept model ids.
 AmazonBedrock.configure({ apiKey: "bedrock-key" }).model("anthropic.claude", {})
-
-OpenRouter.configure({ apiKey: "openrouter-key" }).model("openai/gpt-4o-mini")
-// @ts-expect-error OpenRouter model selectors only accept model ids.
-OpenRouter.configure({ apiKey: "openrouter-key" }).model("openai/gpt-4o-mini", {})
 
 XAI.configure({ apiKey: "xai-key" }).responses("grok-4")
 XAI.configure({ apiKey: "xai-key" }).chat("grok-4")

@@ -139,7 +139,7 @@ export function getPipelineRow(id: number): OutreachRow | null {
  */
 export function writeDraft(
   clientId: number,
-  input: { subject: string; body: string },
+  input: { subject: string; body: string; variant?: string },
 ): { filePath: string; row: OutreachRow } {
   const client = getClient(clientId)
   if (!client) throw new Error(`No client with id ${clientId}.`)
@@ -161,12 +161,10 @@ export function writeDraft(
   const filePath = path.join(dir, `C${clientId}-${slug(subject, "draft")}.md`)
   fs.mkdirSync(dir, { recursive: true })
 
-  fs.writeFileSync(filePath, renderDraft(pipelineRow, client.email, subject, body, touch, "drafted"))
-  // queued_touch marks the touch number whose draft is waiting for review, so
-  // the scheduler never writes a second copy of the same follow-up.
+  fs.writeFileSync(filePath, renderDraft(pipelineRow, client.email, subject, body, touch, "drafted", input.variant))
   crmDb().run(
-    "UPDATE pipeline SET draft_path = ?, approved = 0, queued_touch = ?, updated_at = ? WHERE id = ?",
-    [filePath, touch, nowISO(), pipelineRow.id],
+    "UPDATE pipeline SET draft_path = ?, approved = 0, queued_touch = ?, variant = ?, updated_at = ? WHERE id = ?",
+    [filePath, touch, input.variant ?? null, nowISO(), pipelineRow.id],
   )
   return { filePath, row: getPipelineRow(pipelineRow.id) ?? pipelineRow }
 }
@@ -178,8 +176,9 @@ function renderDraft(
   body: string,
   touch: number,
   status: string,
+  variant?: string,
 ): string {
-  return [
+  const lines = [
     "---",
     `pipeline: ${pipelineRow.id}`,
     `client: ${pipelineRow.client_id}`,
@@ -188,7 +187,11 @@ function renderDraft(
     `subject: ${subject}`,
     `status: ${status}`,
     `created: ${nowISO()}`,
-    "---",
+  ]
+  if (variant) lines.push(`variant: ${variant}`)
+  lines.push("---")
+  return [
+    ...lines,
     "",
     body,
     "",
@@ -473,6 +476,24 @@ export function dispose(
  * so the row joins the stale list. Runs from the same heartbeat pass as the
  * scheduler, and on demand. Rows already disposed are left alone.
  */
+export function variantStats(): { variant: string | null; sent: number; replied: number; conversion: number }[] {
+  const rows = crmDb().query(
+    `SELECT p.variant AS variant, c.status AS status, COUNT(*) AS n
+     FROM pipeline p JOIN clients c ON c.id = p.client_id
+     WHERE p.variant IS NOT NULL
+     GROUP BY p.variant, c.status`,
+  ).all() as { variant: string; status: string; n: number }[]
+  const byVariant = new Map<string, { sent: number; replied: number }>()
+  for (const r of rows) {
+    const v = r.variant ?? "(none)"
+    const cur = byVariant.get(v) ?? { sent: 0, replied: 0 }
+    cur.sent += r.n
+    if (r.status === "yes" || r.status === "done" || r.status === "payment" || r.status === "scheduled") cur.replied += r.n
+    byVariant.set(v, cur)
+  }
+  return [...byVariant.entries()].map(([variant, d]) => ({ variant, sent: d.sent, replied: d.replied, conversion: d.sent ? d.replied / d.sent : 0 }))
+}
+
 export function sweepExhausted(now = nowISO()): OutreachRow[] {
   const exhausted = rows<OutreachRow>(
     `SELECT * FROM pipeline

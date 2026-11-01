@@ -461,35 +461,6 @@ describe("AISDKNative", () => {
     ).toMatchObject({ settings: { baseURL: "https://mantle.private/v1" } })
   })
 
-  test("maps OpenRouter settings to native destinations", () => {
-    expect(
-      map("@openrouter/ai-sdk-provider", {
-        appName: "Elitza",
-        appUrl: "https://opencode.ai",
-        headers: { "x-openrouter-title": "Configured", "x-provider-api-keys": "Configured BYOK" },
-        api_keys: { anthropic: "provider-key" },
-        extraBody: { transforms: ["middle-out"] },
-        models: ["anthropic/claude-sonnet-4.6"],
-        provider: { only: ["anthropic"], require_parameters: true },
-        reasoning: { effort: "high" },
-        future_option: { enabled: true },
-      }),
-    ).toEqual({
-      package: "@elitza/ai/providers/openrouter",
-      settings: {
-        models: ["anthropic/claude-sonnet-4.6"],
-        provider: { only: ["anthropic"], require_parameters: true },
-        reasoning: { effort: "high" },
-        future_option: { enabled: true },
-      },
-      headers: {
-        "x-openrouter-title": "Configured",
-        "HTTP-Referer": "https://opencode.ai",
-        "x-provider-api-keys": "Configured BYOK",
-      },
-      body: { transforms: ["middle-out"] },
-    })
-  })
 
   test("maps every Google thinking setting", () => {
     expect(

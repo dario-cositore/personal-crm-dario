@@ -82,7 +82,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NOTES="Install: curl -fsSL https://elitza.life/install.sh | bash — free models, bring your own key (https://openrouter.ai/keys)"
+          NOTES="Install: curl -fsSL https://elitza.life/install.sh | bash — MiMo-only: bring your own Xiaomi MiMo key (https://platform.xiaomimimo.com?ref=HFSR94)"
           if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" ${{ matrix.settings.target }}.tar.gz -R "$GITHUB_REPOSITORY" --clobber
           else

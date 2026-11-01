@@ -145,7 +145,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot دے ذریعے کوڈنگ دی مدد لئی اے آئی ماڈل",
   "dialog.provider.openai.note": "تیز تے صلاحیت والے عام AI کماں لئی GPT ماڈل",
   "dialog.provider.google.note": "تیز تے منظم جواباں لئی Gemini ماڈل",
-  "dialog.provider.openrouter.note": "اک پرووائیڈر توں سارے سپورٹڈ ماڈلاں تک رسائی لوو",
   "dialog.provider.vercel.note": "سمارٹ روٹنگ دے نال اے آئی ماڈل تک متحدہ رسائی",
   "dialog.model.select.title": "ماڈل چنو",
   "dialog.model.search.placeholder": "ماڈل لبھو",

@@ -16,7 +16,6 @@ Here is a short list of some deps (please be comprehensive tho):
 - "ai"
 - "@ai-sdk/openai"
 - "@ai-sdk/anthropic"
-- "@openrouter/ai-sdk-provider"
 - etc, etc
 
 DO NOT upgrade the dependencies yet, just make a list of all dependencies and their versions that can be upgraded to minor or patch versions only.

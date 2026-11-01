@@ -145,7 +145,6 @@ export const dict = {
   "dialog.provider.copilot.note": "Các mô hình AI hỗ trợ lập trình qua GitHub Copilot",
   "dialog.provider.openai.note": "Các mô hình GPT nhanh và mạnh mẽ cho tác vụ AI đa dụng",
   "dialog.provider.google.note": "Các mô hình Gemini cho phản hồi nhanh, có cấu trúc",
-  "dialog.provider.openrouter.note": "Truy cập tất cả các mô hình được hỗ trợ từ một nhà cung cấp",
   "dialog.provider.vercel.note": "Truy cập thống nhất vào các mô hình AI với tính năng định tuyến thông minh",
   "dialog.model.select.title": "Chọn mô hình",
   "dialog.model.search.placeholder": "Tìm kiếm mô hình",

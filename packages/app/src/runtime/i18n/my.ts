@@ -141,7 +141,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot မှတစ်ဆင့် ကုဒ်ရေးနည်းအကူအညီအတွက် AI မော်ဒယ်များ",
   "dialog.provider.openai.note": "လျင်မြန်ပြီး လုပ်ဆောင်နိုင်သော အထွေထွေ AI လုပ်ဆောင်ချက်များအတွက် GPT မော်ဒယ်များ",
   "dialog.provider.google.note": "မြန်ဆန်ပြီး ဖွဲ့စည်းတည်ဆောက်ထားသော တုံ့ပြန်မှုများအတွက် Gemini မော်ဒယ်များ",
-  "dialog.provider.openrouter.note": "ပံ့ပိုးပေးသူတစ်ခုတည်းမှ ပံ့ပိုးပေးထားသော မော်ဒယ်အားလုံးကို ဝင်ရောက်ကြည့်ရှုပါ။",
   "dialog.provider.vercel.note": "စမတ်လမ်းကြောင်းဖြင့် AI မော်ဒယ်များသို့ တစ်စုတစ်စည်းတည်း ဝင်ရောက်ခွင့်",
   "dialog.model.select.title": "မော်ဒယ်ကို ရွေးပါ။",
   "dialog.model.search.placeholder": "မော်ဒယ်များကို ရှာဖွေပါ။",

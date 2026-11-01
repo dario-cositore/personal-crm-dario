@@ -414,17 +414,6 @@ const gemini: Protocol = (model, support) => {
   }
 }
 
-const openrouter: Protocol = (model, support) => {
-  switch (support.type) {
-    case "effort":
-      return efforts(support.values ?? EFFORTS, (effort) => ({ settings: { reasoning: { effort } } }))
-    case "toggle":
-      return toggle({ settings: { reasoning: { enabled: false } } }, { settings: { reasoning: { enabled: true } } })
-    case "budget_tokens":
-      return budgets(model, support, (tokens) => ({ settings: { reasoning: { max_tokens: tokens } } }))
-  }
-}
-
 const bedrockConverse: Protocol = (model, support) => {
   const id = modelID(model)
   const claude = id.includes("anthropic")
@@ -663,7 +652,6 @@ const PROTOCOLS: Readonly<Record<string, Protocol>> = {
 
   "@elitza/ai/providers/amazon-bedrock": bedrockConverse,
   "@elitza/ai/providers/cohere": cohere,
-  "@elitza/ai/providers/openrouter": openrouter,
 
   [Provider.aisdk("venice-ai-sdk-provider")]: veniceChat,
   "@elitza/ai/providers/cloudflare-ai-gateway": cloudflareAIGateway,

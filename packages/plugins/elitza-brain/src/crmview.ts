@@ -10,11 +10,13 @@
  * the engine (elitza serve) starts and goes down when it stops.
  */
 
-import { addClient, findClients, getClient, updateClient, listInteractions, listAssets } from "./crm.js"
+import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun } from "./crm.js"
+import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
 import { scoutBusinesses } from "./scouting.js"
 import { enrichClient } from "./enrichment.js"
+import { listWorksheets, recommendWorksheets, pullWorksheet } from "./worksheets.js"
 
 // Load ~/.elitza/.env (mode 600) into process.env, like the elitza launcher does.
 import { readFileSync } from "node:fs"
@@ -51,13 +53,140 @@ async function readBody(req: Request): Promise<any> {
   try { return await req.json() } catch { return {} }
 }
 
-export function startCrmView(): { stop: () => void; port: number } | null {
+
+async function proxyChatToEngine(text: string): Promise<string> {
+  // Read engine URL/password from service config or env.
+  // Skip proxying if no live engine is available (stale service.json).
+  let liveEngine = false
+  let url = ""
+  let password = process.env.ELITZA_ENGINE_PASSWORD || ""
+  try {
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const os = await import("node:os")
+    const home = process.env.HOME || os.homedir()
+    const cfgPath = path.join(home, ".local", "state", "opencode", "service.json")
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"))
+    if (cfg.pid) {
+      try { process.kill(cfg.pid, 0) } catch { throw new Error("stale service") }
+    }
+    if (cfg.url) { url = cfg.url; liveEngine = true }
+    if (cfg.password) password = cfg.password
+  } catch { /* no live engine */ }
+  if (!liveEngine) return "(no response)"
+  if (process.env.ELITZA_ENGINE_URL) url = process.env.ELITZA_ENGINE_URL
+  const auth = "Basic " + Buffer.from(":" + password).toString("base64")
+  const headers: any = { "Content-Type": "application/json", "Authorization": auth }
+  // Create session
+  const createRes = await fetch(url + "/session", { method: "POST", headers, body: JSON.stringify({ title: "CRM chat" }) })
+  const session = await createRes.json() as any
+  const sid = session.id
+  // Send prompt
+  await fetch(url + "/session/" + sid + "/prompt", { method: "POST", headers, body: JSON.stringify({ parts: [{ type: "text", text }] }) })
+  // Wait for generation
+  await new Promise((r) => setTimeout(r, 3000))
+  // Read messages
+  const msgRes = await fetch(url + "/session/" + sid + "/message", { headers })
+  const msgs = await msgRes.json() as any[]
+  let reply = ""
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    if (m.info?.role !== "assistant") continue
+    reply = (m.parts || []).filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n")
+    break
+  }
+  return reply || "(no response)"
+}
+
+
+async function directMimoChat(text: string): Promise<{ thinking: string; reply: string }> {
+  // Standalone fallback: call MiMo directly with SOUL.md as system prompt.
+  let apiKey = process.env.XIAOMI_API_KEY || ""
+  let baseUrl = "https://api.xiaomimimo.com/v1"
+  // token-plan keys use the ams endpoint
+  if (apiKey.toLowerCase().startsWith("tp-")) baseUrl = "https://token-plan-ams.xiaomimimo.com/v1"
+  let soul = ""
+  let home = process.env.ELITZA_HOME || (process.env.HOME || "") + "/.elitza"
+  try {
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const os = await import("node:os")
+    home = process.env.ELITZA_HOME || (process.env.HOME || os.homedir()) + "/.elitza"
+    const envPath = path.join(home, ".env")
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const t = line.trim()
+      if (!t || t.startsWith("#")) continue
+      const eq = t.indexOf("=")
+      if (eq < 0) continue
+      const k = t.slice(0, eq).trim()
+      let v = t.slice(eq + 1).trim()
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+      if (k === "XIAOMI_API_KEY" && !apiKey) apiKey = v
+    }
+    const soulPath = path.join(home, "SOUL.md")
+    try { soul = fs.readFileSync(soulPath, "utf8").slice(0, 800) } catch {}
+  } catch { /* ignore */ }
+  if (!apiKey) return { thinking: "", reply: "No XIAOMI_API_KEY configured. Run `elitza` setup first." }
+  // Expose ALL brain tools to the model so Elitza can touch every aspect of the CRM.
+  const brainTools = makeBrainTools({ generate: { text: async (input: { prompt: string }) => ({ data: { text: "" } }) } })
+  const tools = brainTools.map((t) => ({
+    type: "function" as const,
+    function: { name: t.name, description: t.description, parameters: t.input },
+  }))
+  const toolByName = new Map(brainTools.map((t) => [t.name, t]))
+  async function runTool(name: string, args: any): Promise<string> {
+    const t = toolByName.get(name)
+    if (!t) return "unknown tool: " + name
+    try {
+      const res = await t.execute(args ?? {})
+      return typeof res?.content === "string" ? res.content : JSON.stringify(res?.content ?? res)
+    } catch (e) { return "error: " + String(e) }
+  }
+
+  const messages: any[] = []
+  if (soul) messages.push({ role: "system", content: soul + "\n\nYou have access to CRM tools. Use them to act on the user's requests. Confirm actions taken. For greetings or small talk, reply directly without calling tools." })
+  messages.push({ role: "user", content: text })
+
+  let thinking = ""
+  // tool-calling loop (omit tools on final pass so the model must answer in text)
+  for (let iter = 0; iter < 4; iter++) {
+    const isLast = iter === 3
+    const body: any = { model: "mimo-v2.6-flash", messages, stream: false }
+    if (!isLast) body.tools = tools
+    const res = await fetch(baseUrl + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json() as any
+    const msg = data?.choices?.[0]?.message
+    if (!msg) return { thinking, reply: "(no response)" }
+    if (msg.reasoning_content) {
+      thinking += (thinking ? "\n\n" : "") + msg.reasoning_content
+    }
+    messages.push(msg)
+    const toolCalls = msg.tool_calls
+    if (!toolCalls || !toolCalls.length) {
+      return { thinking, reply: msg.content || "(no response)" }
+    }
+    for (const tc of toolCalls) {
+      thinking += (thinking ? "\n" : "") + "→ calling " + tc.function.name + "(" + (tc.function.arguments || "") + ")"
+      const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments
+      const result = await runTool(tc.function.name, args)
+      messages.push({ role: "tool", tool_call_id: tc.id, content: result })
+    }
+  }
+  return { thinking, reply: "(no response)" }
+}
+
+export function startCrmView(ctx?: any): { stop: () => void; port: number } | null {
   const PORT = Number(process.env.CRM_VIEW_PORT ?? 8787)
+  let chatSessionId: string | null = null
   let server: ReturnType<typeof Bun.serve> | null = null
   try {
     server = Bun.serve({
       port: PORT,
-      async fetch(req) {
+      async fetch(req, server) {
         const url = new URL(req.url)
         const path = url.pathname
 
@@ -65,11 +194,112 @@ export function startCrmView(): { stop: () => void; port: number } | null {
           return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST", "Access-Control-Allow-Headers": "Content-Type" } })
         }
 
+        // WebSocket upgrade for Ask Elitza chat
+        if (path === "/ws/chat") {
+          const upgraded = server.upgrade(req, { data: {} })
+          if (upgraded) return undefined as any
+          return new Response("WebSocket upgrade failed", { status: 400 })
+        }
+
+        if (path === "/api/setup" && req.method === "POST") {
+          const body = await readBody(req)
+          const answers = body.answers || {}
+          const { adoptAnswers, deriveGates, applyGates, applyProvider, writePersona, hardenSecretFiles, loadEnvFile, alignPlanToKey } = await import("./onboarding.js")
+          const { soulSet } = await import("./soul.js")
+          const { memoryCreate } = await import("./memory.js")
+          const { nowISO } = await import("./db.js")
+          const state = adoptAnswers(answers)
+          // alignPlanToKey if mimo_key provided
+          if (answers.mimo_key) {
+            // handled inside adoptAnswers already for secret; re-align just in case
+          }
+          const personaPath = writePersona(state) ?? ""
+          const gates = applyGates(deriveGates(answers.ask_first ?? ""))
+          const providerNote = applyProvider(answers.mimo_plan ?? "")
+          const hardened = hardenSecretFiles()
+          soulSet("user_name", answers.human ?? "")
+          soulSet("role", answers.role ?? "")
+          soulSet("style", answers.voice ?? "")
+          soulSet("initiative", answers.initiative ?? "")
+          soulSet("hard_rules", answers.never ?? "")
+          soulSet("permission_gates", answers.ask_first ?? "")
+          soulSet("memory_policy", answers.memory ?? "")
+          soulSet("provider", "mimo")
+          soulSet("mimo_key", answers.mimo_key === "(saved, mode 600)" ? "set" : "not set")
+          soulSet("maton_key", answers.maton_key === "(saved, mode 600)" ? "set" : "not set")
+          soulSet("onboarding_completed", state.completed ?? nowISO())
+          try {
+            memoryCreate(
+              `Setup with ${answers.human ?? "my person"}: my name is ${answers.name ?? "Elitza"}, I am ${answers.role ?? "a companion"}, I talk ${answers.voice ?? "directly"}, my initiative is ${answers.initiative ?? "balanced"}. Hard rules: ${answers.never ?? "none"}. I ask first about: ${answers.ask_first ?? "nothing"}.`,
+              { memoryType: "semantic", importance: 0.9, tags: ["setup", "identity"] },
+            )
+          } catch {}
+          return json({ ok: true, personaPath, gates, providerNote, hardened })
+        }
+        if (path === "/api/setup/status" && req.method === "GET") {
+          const { isComplete } = await import("./onboarding.js")
+          return json({ complete: isComplete() })
+        }
+        if (path === "/api/settings" && req.method === "GET") {
+          const { soulGet } = await import("./soul.js")
+          const { getActiveVertical, listVerticals } = await import("./verticals.js")
+          const { costSummary } = await import("./crm.js")
+          const { engineConfigPath } = await import("./configview.js")
+          let gates: any = {}
+          try { const fs = await import("node:fs"); gates = JSON.parse(fs.readFileSync(engineConfigPath(), "utf8")) } catch {}
+          let heartbeatError = ""
+          try { heartbeatError = soulGet("heartbeat_last_error", "") } catch {}
+          return json({
+            provider: soulGet("provider", "mimo"),
+            mimo_key: soulGet("mimo_key", "not set"),
+            maton_key: soulGet("maton_key", "not set"),
+            user_name: soulGet("user_name", ""),
+            role: soulGet("role", ""),
+            voice: soulGet("style", ""),
+            active_vertical: getActiveVertical(),
+            verticals: listVerticals(),
+            permission_gates: gates.permission ?? {},
+            heartbeat_last_tick: soulGet("heartbeat_last_tick", ""),
+            heartbeat_last_error: heartbeatError,
+            cost_7d: costSummary(7),
+            crm_port: Number(process.env.CRM_VIEW_PORT ?? 8787),
+            elitza_home: process.env.ELITZA_HOME || (process.env.HOME + "/.elitza"),
+          })
+        }
+        if (path === "/api/settings/vertical" && req.method === "POST") {
+          const body = await readBody(req)
+          const { setActiveVertical } = await import("./verticals.js")
+          const ok = setActiveVertical(String(body.vertical ?? ""))
+          return json({ ok })
+        }
+        if (path === "/api/settings/backup" && req.method === "POST") {
+          const { execSync } = await import("node:child_process")
+          const os = await import("node:os")
+          const pathm = await import("node:path")
+          const out = pathm.join(os.homedir(), "elitza-backup-" + new Date().toISOString().slice(0, 10) + ".tar.gz")
+          try {
+            execSync("tar -czf " + out + " -C " + (process.env.HOME || os.homedir()) + " .elitza", { stdio: "pipe" })
+            return json({ ok: true, path: out })
+          } catch (e) { return json({ ok: false, error: String(e) }, 500) }
+        }
         if (path === "/api/clients" && req.method === "GET") {
           const status = url.searchParams.get("status") ?? undefined
           const query = url.searchParams.get("q") ?? undefined
-          const clients = findClients({ status, query, limit: 200 })
-          return json({ clients })
+          const sort = url.searchParams.get("sort") ?? undefined
+          const dir = (url.searchParams.get("dir") === "asc" ? "asc" : "desc") as "asc" | "desc"
+          const pipeline = url.searchParams.get("pipeline") === "1"
+          const perPage = Math.max(1, Math.min(200, Number(url.searchParams.get("per_page") ?? url.searchParams.get("limit") ?? 50)))
+          const page = Math.max(1, Number(url.searchParams.get("page") ?? 1))
+          const offset = (page - 1) * perPage
+          const clients = findClients({ status, query, sort, dir, pipeline, limit: perPage, offset })
+          const total = countClients({ status, query, pipeline })
+          return json({ clients, total, page, per_page: perPage, sort, dir })
+        }
+        if (path === "/api/companies" && req.method === "GET") {
+          const q = (url.searchParams.get("q") ?? "").toLowerCase()
+          let companies = listCompanies()
+          if (q) companies = companies.filter((c) => c.name.toLowerCase().includes(q))
+          return json({ companies, total: companies.length })
         }
         const clientMatch = path.match(/^\/api\/clients\/(\d+)$/)
         if (clientMatch && req.method === "GET") {
@@ -89,6 +319,32 @@ export function startCrmView(): { stop: () => void; port: number } | null {
             next_action: body.next_action, next_action_at: body.next_action_at,
           })
           return json({ client, created })
+        }
+        if (path === "/api/bulk/status" && req.method === "POST") {
+          const body = await readBody(req)
+          const ids = (body.ids ?? []).map(Number)
+          const status = String(body.status ?? "")
+          const updated: number[] = []
+          for (const id of ids) {
+            try { updateClient(id, { status }); updated.push(id) } catch { /* skip */ }
+          }
+          return json({ updated: updated.length, ids: updated })
+        }
+        if (path === "/api/today" && req.method === "GET") {
+          const today = new Date().toISOString().slice(0, 10)
+          const clients = findClients({ limit: 200 })
+          const due = clients.filter((c) => (c.next_action_at && c.next_action_at.slice(0, 10) <= today))
+          return json({ today, clients: due })
+        }
+        if (path === "/api/tasks" && req.method === "GET") {
+          const q = (url.searchParams.get("q") ?? "").toLowerCase()
+          const rows = crmDb().query("SELECT * FROM clients WHERE next_action IS NOT NULL AND next_action != '' ORDER BY COALESCE(next_action_at, updated_at) ASC").all() as any[]
+          let clients = rows.map((r) => ({
+            id: r.id, name: r.name, status: r.status, next_action: r.next_action,
+            next_action_at: r.next_action_at, score: r.score, source: r.source,
+          }))
+          if (q) clients = clients.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.next_action || "").toLowerCase().includes(q))
+          return json({ clients, total: clients.length })
         }
         if (path === "/api/clients/update" && req.method === "POST") {
           const body = await readBody(req)
@@ -137,8 +393,29 @@ export function startCrmView(): { stop: () => void; port: number } | null {
         }
         if (path === "/api/scout" && req.method === "POST") {
           const body = await readBody(req)
-          const result = await scoutBusinesses(String(body.location ?? ""), String(body.query ?? ""), Number(body.limit ?? 10))
+          const loc = String(body.location ?? "")
+          const q = String(body.query ?? "")
+          const limit = Number(body.limit ?? 10)
+          const result = await scoutBusinesses(loc, q, limit)
+          // Persist the run so past scouts stay reachable (no wasted API calls).
+          try {
+            const runId = saveScoutRun(loc, q, limit, result.meta?.sources_used ?? [], result.businesses ?? [])
+            result.run_id = runId
+          } catch (e) { /* best effort */ }
           return json(result)
+        }
+        if (path === "/api/scout/runs" && req.method === "GET") {
+          return json({ runs: listScoutRuns() })
+        }
+        const scoutRunMatch = path.match(/^\/api\/scout\/runs\/(\d+)$/)
+        if (scoutRunMatch && req.method === "GET") {
+          const run = getScoutRun(Number(scoutRunMatch[1]))
+          if (!run) return json({ error: "not found" }, 404)
+          return json(run)
+        }
+        if (scoutRunMatch && req.method === "DELETE") {
+          deleteScoutRun(Number(scoutRunMatch[1]))
+          return json({ ok: true })
         }
         if (path === "/api/enrich" && req.method === "POST") {
           const body = await readBody(req)
@@ -181,7 +458,136 @@ export function startCrmView(): { stop: () => void; port: number } | null {
           }
         }
 
+        if (path === "/api/tags" && req.method === "GET") {
+          const { allTags, listTags } = await import("./crm.js")
+          const clientId = url.searchParams.get("client_id")
+          if (clientId) return json({ tags: listTags(Number(clientId)) })
+          return json({ tags: allTags() })
+        }
+        if (path === "/api/tags/add" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addTag } = await import("./crm.js")
+          addTag(Number(body.client_id), String(body.tag ?? ""))
+          return json({ ok: true })
+        }
+        if (path === "/api/tags/remove" && req.method === "POST") {
+          const body = await readBody(req)
+          const { removeTag } = await import("./crm.js")
+          removeTag(Number(body.client_id), String(body.tag ?? ""))
+          return json({ ok: true })
+        }
+        if (path === "/api/deals" && req.method === "GET") {
+          const { listDeals } = await import("./crm.js")
+          const clientId = url.searchParams.get("client_id")
+          const deals = listDeals(clientId ? Number(clientId) : undefined)
+          return json({ deals })
+        }
+        if (path === "/api/deals" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addDeal } = await import("./crm.js")
+          const deal = addDeal(Number(body.client_id), { title: String(body.title ?? "Deal"), stage: body.stage, value: body.value !== undefined ? Number(body.value) : undefined, probability: body.probability !== undefined ? Number(body.probability) : undefined, close_date: body.close_date, notes: body.notes })
+          return json({ deal })
+        }
+        if (path === "/api/deals/update" && req.method === "POST") {
+          const body = await readBody(req)
+          const { updateDeal } = await import("./crm.js")
+          const deal = updateDeal(Number(body.id), { title: body.title, stage: body.stage, value: body.value !== undefined ? Number(body.value) : undefined, probability: body.probability !== undefined ? Number(body.probability) : undefined, close_date: body.close_date, notes: body.notes })
+          return json({ deal })
+        }
+        if (path === "/api/deals/delete" && req.method === "POST") {
+          const body = await readBody(req)
+          const { deleteDeal } = await import("./crm.js")
+          deleteDeal(Number(body.id))
+          return json({ ok: true })
+        }
+        if (path === "/api/cloud" && req.method === "GET") {
+          const { listCloudAccounts } = await import("./crm.js")
+          const accs = listCloudAccounts().map((a: any) => ({ id: a.id, provider: a.provider, account_label: a.account_label, status: a.status, last_sync: a.last_sync, last_error: a.last_error }))
+          return json({ accounts: accs })
+        }
+        if (path === "/api/cloud/connect" && req.method === "POST") {
+          const body = await readBody(req)
+          const { connectCloud } = await import("./crm.js")
+          const acc = connectCloud(String(body.provider ?? ""), String(body.access_token ?? ""), body.refresh_token ? String(body.refresh_token) : undefined, body.label ? String(body.label) : undefined)
+          return json({ account: acc })
+        }
+        if (path === "/api/cloud/disconnect" && req.method === "POST") {
+          const body = await readBody(req)
+          const { disconnectCloud } = await import("./crm.js")
+          disconnectCloud(Number(body.id))
+          return json({ ok: true })
+        }
+        if (path === "/api/cloud/sync" && req.method === "POST") {
+          const { continuousBackupStream } = await import("./crm.js")
+          const r = await continuousBackupStream()
+          return json(r)
+        }
+        if (path === "/api/revenue" && req.method === "GET") {
+          const { revenueStats } = await import("./crm.js")
+          return json(revenueStats())
+        }
+        if (path === "/api/digest" && req.method === "GET") {
+          const { weeklyDigest } = await import("./crm.js")
+          return json({ markdown: weeklyDigest() })
+        }
+        if (path === "/api/worksheets" && req.method === "GET") {
+          return json({ worksheets: listWorksheets() })
+        }
+        if (path === "/api/worksheets/recommend" && req.method === "GET") {
+          const id = Number(url.searchParams.get("id"))
+          const client = getClient(id)
+          if (!client) return json({ error: "not found" }, 404)
+          return json({ client_id: id, recommended: recommendWorksheets(client, Number(url.searchParams.get("limit") ?? 3)) })
+        }
+        if (path === "/api/worksheets/pull" && req.method === "POST") {
+          const body = await readBody(req)
+          const result = pullWorksheet(Number(body.id), String(body.worksheet_id ?? ""))
+          return json(result)
+        }
+
         return new Response(HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } })
+      },
+      websocket: {
+        async message(ws, message) {
+          const text = String(message)
+          try {
+            if (ctx) {
+              if (!chatSessionId) {
+                const created = await ctx.session.create({ title: "CRM chat" })
+                chatSessionId = created.id
+              }
+              await ctx.session.prompt({ sessionID: chatSessionId, text: { text } } as any)
+              await new Promise((r) => setTimeout(r, 2000))
+              const msgs = await ctx.session.context({ sessionID: chatSessionId })
+              let reply = ""
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i]
+                if (m.type !== "assistant") continue
+                reply = (m.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
+                break
+              }
+              ws.send(JSON.stringify({ type: "reply", text: reply || "(no response)" }))
+              return
+            }
+            // Standalone mode: proxy to a running Elitza engine.
+            let reply = ""
+            let thinking = ""
+            try { reply = await proxyChatToEngine(text) } catch (e) { reply = "" }
+            if (!reply || reply === "(no response)") {
+              try {
+                const r = await directMimoChat(text)
+                reply = r.reply
+                thinking = r.thinking
+              } catch (e) { reply = "Error: " + String(e) }
+            }
+            if (thinking) ws.send(JSON.stringify({ type: "thinking", text: thinking }))
+            ws.send(JSON.stringify({ type: "reply", text: reply || "(no response)" }))
+          } catch (e) {
+            ws.send(JSON.stringify({ type: "error", text: String(e) }))
+          }
+        },
+        open(ws) { /* no auto-greeting; the UI shows its own greeting */ },
+        close(ws) {},
       },
     })
   } catch (error) {

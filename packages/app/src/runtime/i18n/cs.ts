@@ -138,7 +138,6 @@ export const dict = {
   "dialog.provider.copilot.note": "Modely umělé inteligence pro pomoc s kódováním prostřednictvím GitHub Copilot",
   "dialog.provider.openai.note": "GPT modely pro rychlé a schopné obecné úlohy umělé inteligence",
   "dialog.provider.google.note": "Gemini modely pro rychlé, strukturované odpovědi",
-  "dialog.provider.openrouter.note": "Získejte přístup ke všem podporovaným modelům od jednoho poskytovatele",
   "dialog.provider.vercel.note": "Jednotný přístup k modelům AI s chytrým směrováním",
   "dialog.model.select.title": "Vyberte model",
   "dialog.model.search.placeholder": "Hledat modely",

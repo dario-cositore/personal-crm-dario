@@ -150,7 +150,6 @@ export const dict = {
   "dialog.provider.copilot.note": "AI módel fyrir kóðaaðstoð í gegnum GitHub Copilot",
   "dialog.provider.openai.note": "GPT gerðir fyrir hröð, fær almenn gervigreind verkefni",
   "dialog.provider.google.note": "Gemini módel fyrir hröð, skipulögð viðbrögð",
-  "dialog.provider.openrouter.note": "Fáðu aðgang að öllum studdum gerðum frá einum þjónustuaðila",
   "dialog.provider.vercel.note": "Sameinaður aðgangur að gervigreindum gerðum með snjallri leið",
   "dialog.model.select.title": "Veldu líkan",
   "dialog.model.search.placeholder": "Leitaðu að gerðum",

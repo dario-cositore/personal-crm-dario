@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Synced from the website repo: "2. Elitza Ecosystem/2. Website/elitza.life/install.sh"
-# The desktop app imports this file at build time, so it has to live here too.
 # =============================================================================
 #  Elitza installer
 # =============================================================================
@@ -31,8 +29,8 @@
 #       state and cache under ~/.elitza/home and loads keys from ~/.elitza/.env)
 #    5. Seeds config, SOUL and directories that don't exist yet
 #
-#  Elitza never ships an API key. Bring your own free OpenRouter key:
-#    https://openrouter.ai/keys
+#  Elitza never ships an API key. Bring your own Xiaomi MiMo key:
+#    https://platform.xiaomimimo.com?ref=HFSR94  (invite code HFSR94)
 # =============================================================================
 
 set -euo pipefail
@@ -62,7 +60,7 @@ HOME_DIR="${ELITZA_HOME:-$HOME/.elitza}"
 BIN_DIR="${ELITZA_BIN_DIR:-$HOME/.local/bin}"
 BIN_LINK="$BIN_DIR/elitza"
 CONFIG_FILE="$HOME_DIR/home/config/opencode.json"
-DEFAULT_MODEL="openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+DEFAULT_MODEL="elitza/xiaomi/mimo-v2.6-flash"
 
 # --- Output helpers --------------------------------------------------------
 if [ -t 1 ]; then
@@ -151,8 +149,8 @@ Environment:
   ELITZA_INSTALL_DIR   Where the binary is installed        (default ~/.elitza/agent)
   ELITZA_BIN_DIR       Where the `elitza` launcher is placed (default ~/.local/bin)
 
-Elitza never ships an API key. Bring your own free OpenRouter key:
-  https://openrouter.ai/keys
+Elitza never ships an API key. Bring your own Xiaomi MiMo key:
+  https://platform.xiaomimimo.com?ref=HFSR94  (invite code HFSR94)
 EOF
 }
 
@@ -425,9 +423,10 @@ seed_home() {
     if [ ! -f "$HOME_DIR/.env" ]; then
         cat > "$HOME_DIR/.env" <<'EOF'
 # Elitza provider keys — loaded by the `elitza` launcher.
-# Get a FREE OpenRouter key: https://openrouter.ai/keys
-# Then: OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_API_KEY=
+# MiMo is the only provider. Create your account:
+#   https://platform.xiaomimimo.com?ref=HFSR94  (invite code HFSR94)
+# Then: XIAOMI_API_KEY=tp-... (Token Plan) or sk-... (standard API)
+XIAOMI_API_KEY=
 EOF
         ok "Created $HOME_DIR/.env (drop your key in there)"
     fi
@@ -475,7 +474,7 @@ EOF
         ok "Seeded $HOME_DIR/SOUL.md"
     fi
 
-    # Config — default free model + brain plugin, only when absent.
+    # Config — her Xiaomi MiMo provider + brain plugin, only when absent.
     if [ ! -f "$CONFIG_FILE" ]; then
         mkdir -p "$(dirname "$CONFIG_FILE")"
         cat > "$CONFIG_FILE" <<EOF
@@ -483,7 +482,18 @@ EOF
   "model": "$DEFAULT_MODEL",
   "plugins": [
     "$INSTALL_DIR/elitza-brain"
-  ]
+  ],
+  "providers": {
+    "elitza": {
+      "name": "Xiaomi MiMo",
+      "package": "@elitza/ai/providers/openai-compatible",
+      "env": ["XIAOMI_API_KEY"],
+      "settings": { "baseURL": "https://api.xiaomimimo.com/v1" },
+      "models": {
+        "xiaomi/mimo-v2.6-flash": { "name": "MiMo V2.6 Flash", "modelID": "mimo-v2.6-flash" }
+      }
+    }
+  }
 }
 EOF
         ok "Seeded $CONFIG_FILE"
@@ -668,10 +678,10 @@ install() {
 
     printf '\n'
     ok "Elitza is ready"
-    printf '%s\n' "  1. Get a FREE OpenRouter key → https://openrouter.ai/keys"
-    printf '%s\n' "  2. Run ${C_BOLD}elitza${C_RESET}, then ${C_BOLD}/connect${C_RESET} and paste it"
-    printf '%s\n' "     (or set OPENROUTER_API_KEY=... in $HOME_DIR/.env)"
-    printf '%s\n' "  Free models work out of the box — no card, no trial."
+    printf '%s\n' "  1. Create your Xiaomi MiMo account → https://platform.xiaomimimo.com?ref=HFSR94"
+    printf '%s\n' "     (invite code HFSR94 takes 10% off your first paid Token Plan order)"
+    printf '%s\n' "  2. Run ${C_BOLD}elitza${C_RESET} — the setup wizard opens and asks for your key,"
+    printf '%s\n' "     then writes XIAOMI_API_KEY=... into $HOME_DIR/.env for you."
 }
 
 # =============================================================================

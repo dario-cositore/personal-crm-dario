@@ -24,6 +24,7 @@ import path from "node:path"
 import { nowISO } from "./db.js"
 import { soulGet } from "./soul.js"
 import { engineConfigPath } from "./configview.js"
+import { getIdentity, sign, sha256, verify } from "./identity.js"
 
 const ENV_PATTERN = /process\.env\.([A-Z][A-Z0-9_]+)|os\.environ(?:\.get)?\(?[["']([A-Z][A-Z0-9_]+)/g
 const SECRET_HINT = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)/
@@ -45,6 +46,10 @@ export interface HandoverResult {
   commits: number
   env_vars: string[]
   sections: string[]
+  signed: boolean
+  public_key: string
+  signature_path: string
+  sha256: string
 }
 
 function git(repo: string, args: string[]): string {
@@ -216,8 +221,119 @@ export function generateHandover(options: HandoverOptions): HandoverResult {
     "",
   ].join("\n")
 
+  // Sign the document the way gitlawb signs a push: Elitza's Ed25519 key
+  // covers the full body, and the public key travels with it so any
+  // recipient can verify without trusting an intermediary.
+  const identity = getIdentity()
+  const digest = sha256(body)
+  const signature = sign(body)
+  const signatureBlock = [
+    "",
+    "## Signature",
+    "",
+    "This document was signed by Elitza's Ed25519 identity. Verify with her public key (below) or with `openssl`/any Ed25519 verifier; the signature covers the entire document above this heading's preceding content.",
+    "",
+    `- Signer: \`${identity.id}\``,
+    `- Public key (base64, raw 32-byte Ed25519): \`${identity.publicKeyBase64}\``,
+    `- SHA-256 of signed body: \`${digest}\``,
+    `- Signature (base64): \`${signature}\``,
+    `- Algorithm: Ed25519 (RFC 8032)`,
+    "",
+    "A sidecar file with the same fields is written next to this document as `CLIENT_SOP_HANDOVER.md.sig` (or `<out>.sig`).",
+    "",
+  ].join("\n")
+
+  const signedBody = body + signatureBlock
+
   const target = path.resolve(options.out ?? path.join(repo, "CLIENT_SOP_HANDOVER.md"))
   fs.mkdirSync(path.dirname(target), { recursive: true })
-  fs.writeFileSync(target, body)
-  return { path: target, commits, env_vars: envVars, sections }
+  fs.writeFileSync(target, signedBody, { mode: 0o644 })
+
+  const sigPath = `${target}.sig`
+  fs.writeFileSync(
+    sigPath,
+    JSON.stringify(
+      {
+        file: path.basename(target),
+        sha256: digest,
+        body_length: body.length,
+        signature,
+        public_key: identity.publicKeyBase64,
+        signer: identity.id,
+        algorithm: "Ed25519",
+        signed_at: nowISO(),
+      },
+      null,
+      2,
+    ),
+    { mode: 0o644 },
+  )
+
+  const sectionsWithSig = [...sections, "Signature"]
+  return {
+    path: target,
+    commits,
+    env_vars: envVars,
+    sections: sectionsWithSig,
+    signed: true,
+    public_key: identity.publicKeyBase64,
+    signature_path: sigPath,
+    sha256: digest,
+  }
+}
+
+/**
+ * Verify a signed handover document. Returns a human-readable report.
+ * Reconstructs the signed body (everything before the "## Signature" heading)
+ * and checks the Ed25519 signature and SHA-256 digest embedded in it.
+ */
+export function verifyHandover(file: string): string {
+  const target = path.resolve(file)
+  if (!fs.existsSync(target)) return `Handover verify: no such file: ${target}`
+  const content = fs.readFileSync(target, "utf8")
+  const marker = "\n## Signature\n"
+  const idx = content.indexOf(marker)
+  if (idx === -1) return `Handover verify: no signature block found in ${target}`
+  const body = content.slice(0, idx)
+  // Parse fields from the signature block.
+  const block = content.slice(idx)
+  const pubMatch = /Public key \(base64, raw 32-byte Ed25519\): `([^`]+)`/.exec(block)
+  const sigMatch = /Signature \(base64\): `([^`]+)`/.exec(block)
+  const digestMatch = /SHA-256 of signed body: `([^`]+)`/.exec(block)
+  if (!pubMatch || !sigMatch || !digestMatch) {
+    return `Handover verify: signature block is incomplete in ${target}`
+  }
+  const pub = pubMatch[1]
+  const sig = sigMatch[1]
+  const digest = digestMatch[1]
+  const digestOk = sha256(body) === digest
+  const sigOk = verify(body, sig, pub)
+  // Ensure nothing was appended after the signature block.
+  const sidecarNoteIdx = block.indexOf("A sidecar file with the same fields")
+  const afterBlock = sidecarNoteIdx === -1
+    ? ""
+    : block.slice(block.indexOf("\n", sidecarNoteIdx) + 1).trim()
+  const noTrailingJunk = afterBlock === ""
+  const lines = [
+    `Handover verify: ${target}`,
+    `SHA-256 match: ${digestOk ? "OK" : "FAIL"}`,
+    `Ed25519 signature: ${sigOk ? "OK" : "FAIL"}`,
+    `Trailing junk after signature block: ${noTrailingJunk ? "none" : "DETECTED"}`,
+    `Signer public key: ${pub}`,
+  ]
+  // Also check sidecar if present.
+  const sidecar = `${target}.sig`
+  if (fs.existsSync(sidecar)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(sidecar, "utf8")) as { sha256: string; signature: string; public_key: string; body_length?: number }
+      const lengthOk = meta.body_length === undefined || meta.body_length === body.length
+      lines.push(`Sidecar present: sha256 ${meta.sha256 === digest ? "matches" : "MISMATCH"}, signature ${meta.signature === sig ? "matches" : "MISMATCH"}, body length ${lengthOk ? "matches" : "MISMATCH"}`)
+    } catch {
+      lines.push("Sidecar present but unreadable")
+    }
+  } else {
+    lines.push("No sidecar file found")
+  }
+  lines.push(digestOk && sigOk && noTrailingJunk ? "RESULT: VALID" : "RESULT: INVALID")
+  return lines.join("\n")
 }

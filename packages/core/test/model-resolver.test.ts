@@ -1059,12 +1059,6 @@ describe("ModelResolver", () => {
           { thinkingConfig: { thinkingLevel: "high" } },
         ],
         [
-          "@openrouter/ai-sdk-provider",
-          "@elitza/ai/providers/openrouter",
-          { reasoning: { effort: "high" } },
-          { reasoning: { effort: "high" } },
-        ],
-        [
           "@ai-sdk/groq",
           "@elitza/ai/providers/groq",
           { reasoningEffort: "high", parallelToolCalls: false },
@@ -1147,7 +1141,6 @@ describe("ModelResolver", () => {
         ["@ai-sdk/mistral", "@elitza/ai/providers/mistral", "api-model"],
         ["@ai-sdk/openai", "@elitza/ai/providers/openai", "api-model"],
         ["@ai-sdk/openai-compatible", "@elitza/ai/providers/openai-compatible", "api-model"],
-        ["@openrouter/ai-sdk-provider", "@elitza/ai/providers/openrouter", "api-model"],
         ["@ai-sdk/togetherai", "@elitza/ai/providers/togetherai", "api-model"],
         ["@ai-sdk/gateway", "@elitza/ai/providers/vercel-ai-gateway", "openai/gpt-5.4"],
         ["@ai-sdk/xai", "@elitza/ai/providers/xai", "api-model"],
@@ -1222,37 +1215,6 @@ describe("ModelResolver", () => {
     }),
   )
 
-  it.effect("merges mapped OpenRouter headers and body with catalog overlays", () =>
-    ModelResolver.fromCatalogModel(
-      model(Provider.aisdk("@openrouter/ai-sdk-provider"), {
-        settings: {
-          appName: "Elitza",
-          appUrl: "https://opencode.ai",
-          extraBody: { transforms: ["middle-out"], provider: { sort: "price" } },
-        },
-        headers: { "X-OpenRouter-Title": "Custom" },
-        body: { provider: { only: ["anthropic"] } },
-      }),
-      undefined,
-      {
-        loadPackage: () =>
-          Effect.succeed({
-            model: (modelID, settings) => {
-              expect(settings.headers).toEqual({
-                "HTTP-Referer": "https://opencode.ai",
-                "X-OpenRouter-Title": "Custom",
-              })
-              expect(settings.body).toEqual({
-                transforms: ["middle-out"],
-                provider: { sort: "price", only: ["anthropic"] },
-              })
-              return LanguageModel.make({ id: modelID, provider: "openrouter", route: OpenAIChat.route })
-            },
-          }),
-      },
-    ),
-  )
-
   it.effect("merges mapped Mistral headers and body with catalog overlays", () =>
     ModelResolver.fromCatalogModel(
       model(Provider.aisdk("@ai-sdk/mistral"), {
@@ -1287,11 +1249,6 @@ describe("ModelResolver", () => {
     Effect.gen(function* () {
       const google = yield* ModelResolver.fromCatalogModel(
         model(Provider.aisdk("@ai-sdk/google"), { settings: { thinkingConfig: { thinkingBudget: 1_024 } } }),
-      )
-      const openrouter = yield* ModelResolver.fromCatalogModel(
-        model(Provider.aisdk("@openrouter/ai-sdk-provider"), {
-          settings: { reasoning: { effort: "high" } },
-        }),
       )
       const cerebras = yield* ModelResolver.fromCatalogModel(
         model(Provider.aisdk("@ai-sdk/cerebras"), { settings: { reasoningEffort: "high" } }),
@@ -1342,8 +1299,6 @@ describe("ModelResolver", () => {
 
       expect(google.route.id).toBe("gemini")
       expect(google.route.defaults.providerOptions).toEqual({ thinkingConfig: { thinkingBudget: 1_024 } })
-      expect(openrouter.route.id).toBe("openrouter")
-      expect(openrouter.route.defaults.providerOptions).toEqual({ reasoning: { effort: "high" } })
       expect(cerebras.route.id).toBe("cerebras-chat")
       expect(cerebras.route.defaults.providerOptions).toEqual({ reasoningEffort: "high" })
       expect(String(cerebras.provider)).toBe("test-provider")

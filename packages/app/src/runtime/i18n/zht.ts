@@ -155,7 +155,6 @@ export const dict = {
   "dialog.provider.openai.note": "適合快速且功能強大的通用 AI 工作之 GPT 模型",
   "dialog.provider.copilot.note": "透過 GitHub Copilot 使用程式設計輔助 AI 模型",
   "dialog.provider.google.note": "Gemini 模型，提供快速且結構化的回應",
-  "dialog.provider.openrouter.note": "從單一提供者存取所有支援的模型",
   "dialog.provider.vercel.note": "透過智慧路由統一存取 AI 模型",
 
   "dialog.model.select.title": "選擇模型",

@@ -49,10 +49,16 @@
 
 import fs from "node:fs"
 import { consolidate, getMetamemory, pruneAll, recall } from "./memory.js"
+import { soulGet, soulSet } from "./soul.js"
 import { pollPipeline } from "./pipeline.js"
 import { queueFollowups, sweepExhausted } from "./outreach.js"
-import { soulGet, soulSet } from "./soul.js"
-import type { EmotionEngine } from "./emotion.js"
+import { processTriggers, continuousBackupStream } from "./crm.js"
+
+export interface EmotionEngine {
+  onSilence: (idle: number) => void
+  getFeelingStatement: () => string
+  getEmotionalContext: () => { mood: string }
+}
 
 const REFLECT_IDLE_MINUTES = 45
 const REFLECT_COOLDOWN_MINUTES = 240
@@ -112,7 +118,7 @@ export function reflect(emotion: EmotionEngine): HeartbeatReflection | null {
   if (lastReflect < REFLECT_COOLDOWN_MINUTES) return null
 
   const metamemory = getMetamemory()
-  if (!metamemory.total_memories) return null
+  if (!metamemory.totalMemories) return null
 
   const feeling = emotion.getFeelingStatement()
   const recent = recall(undefined, { limit: 1 })
@@ -173,11 +179,13 @@ export function startHeartbeat(emotion: EmotionEngine, cadenceMs?: number): Hear
 
   const tick = (): void => {
     try {
+      soulSet('heartbeat_last_tick', new Date().toISOString())
       debug(`tend: ${tend()}`)
       reflect(emotion)
     } catch (error) {
       // A heartbeat that throws must never take the host down.
       debug(`tick-error: ${String(error)}`)
+      try { soulSet('heartbeat_last_error', String(error).slice(0,500)) } catch { /* best effort */ }
     }
     // POLL — gapfeed radar -> pipeline drafts. Interval-gated inside, and
     // pollPipeline never throws; the catch is belt on the async path.
@@ -199,6 +207,23 @@ export function startHeartbeat(emotion: EmotionEngine, cadenceMs?: number): Hear
       } catch (error) {
         debug(`cadence-error: ${String(error)}`)
       }
+    }
+
+    // TRIGGERS — event-driven touches (Task: triggered email engine).
+    if (process.env.ELITZA_TRIGGERS !== "0") {
+      try {
+        const tr = processTriggers()
+        if (tr.fired) debug(`triggers fired=${tr.fired} checked=${tr.checked}`)
+      } catch (error) {
+        debug(`trigger-error: ${String(error)}`)
+      }
+    }
+
+    // CLOUD SYNC — continuous backup stream to connected cloud accounts.
+    if (process.env.ELITZA_CLOUD_SYNC !== "0") {
+      void continuousBackupStream()
+        .then((r) => { if (r.uploaded) debug(`cloud sync: backup=${r.created} uploaded=${r.uploaded}`) })
+        .catch((e) => debug(`cloud-sync-error: ${String(e)}`))
     }
   }
 

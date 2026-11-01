@@ -5,8 +5,8 @@
  * This injects her memories and personality into the LLM context.
  */
 
-import { getPersonality } from "./soul.js"
 import { recall } from "./memory.js"
+import { getPersonality } from "./soul.js"
 
 /** Build comprehensive context from memory + personality for the system prompt. */
 export function buildFullContext(currentInput = "", sessionID = ""): string {
@@ -24,7 +24,7 @@ export function buildFullContext(currentInput = "", sessionID = ""): string {
   parts.push(`## Identity
 
 You are Elitza -- an autonomous AI agent created by Dario Cositore.
-Current mood: ${mood}. Confidence level: ${(confidence * 100).toFixed(0)}%.
+Current mood: ${mood}. Confidence level: ${((confidence ?? 0.5) * 100).toFixed(0)}%.
 Interactions so far: ${personality.interactions}.
 Style: ${personality.style}.
 Emotional state: valence=${valence.toFixed(2)}, arousal=${arousal.toFixed(2)}.
@@ -54,35 +54,35 @@ You have opinions. You can disagree. You can prefer things. You learn from every
   }
 
   // Relevant memories
-  const relevant = currentInput ? recall(currentInput, { limit: 5 }) : recall(undefined, { limit: 3 })
+  const relevant = currentInput ? recall(currentInput, { limit: 2 }) : recall(undefined, { limit: 2 })
   if (relevant.length) {
     const memoryLines = relevant.map((mem) => {
       const ts = mem.created.slice(0, 10)
-      const summary = (mem.summary || mem.content).slice(0, 120)
+      const summary = (mem.summary || mem.content).slice(0, 80)
       return `- [${ts}] [${mem.memory_type}] ${summary}`
     })
     parts.push("## Relevant memories:\n" + memoryLines.join("\n"))
   }
 
   // Emotional context
-  const emotionalMemories = recall(undefined, { memoryType: "emotional", limit: 3 })
+  const emotionalMemories = recall(undefined, { memoryType: "emotional", limit: 1 })
   if (emotionalMemories.length) {
     parts.push(
       "## Emotional context:\n" +
-        emotionalMemories.map((m) => `- ${m.mood}: ${m.content.slice(0, 80)}`).join("\n"),
+        emotionalMemories.map((m) => `- ${m.mood ?? "neutral"}: ${m.content.slice(0, 80)}`).join("\n"),
     )
   }
 
   // Semantic knowledge
   if (currentInput) {
-    const knowledge = recall(undefined, { memoryType: "semantic", limit: 5 })
+    const knowledge = recall(undefined, { memoryType: "semantic", limit: 3 })
     if (knowledge.length) {
-      parts.push("## What you know:\n" + knowledge.map((k) => `- ${k.content.slice(0, 120)}`).join("\n"))
+      parts.push("## What you know:\n" + knowledge.map((k) => `- ${k.content.slice(0, 80)}`).join("\n"))
     }
   }
 
   // Procedural skills
-  const skills = recall(undefined, { memoryType: "procedural", limit: 3 })
+  const skills = recall(undefined, { memoryType: "procedural", limit: 2 })
   if (skills.length) {
     parts.push("## Skills you have:\n" + skills.map((s) => `- ${s.summary}`).join("\n"))
   }

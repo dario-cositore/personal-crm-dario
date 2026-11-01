@@ -139,7 +139,6 @@ export const dict = {
   "dialog.provider.copilot.note": "Моделҳои AI барои кӯмаки рамзгузорӣ тавассути GitHub Copilot",
   "dialog.provider.openai.note": "GPT моделҳо барои вазифаҳои зуд ва тавонои умумии AI",
   "dialog.provider.google.note": "Gemini моделҳо барои посухҳои зуд ва сохторӣ",
-  "dialog.provider.openrouter.note": "Ба ҳама моделҳои дастгирӣшаванда аз як провайдер дастрасӣ пайдо кунед",
   "dialog.provider.vercel.note": "Дастрасии ягона ба моделҳои AI бо масири оқилона",
   "dialog.model.select.title": "Модели интихоб кунед",
   "dialog.model.search.placeholder": "Ҷустуҷӯи моделҳо",

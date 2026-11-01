@@ -56,10 +56,6 @@ export const Picker = {
   ),
 }
 
-export const ApiKey = {
-  render: renderConnection("openrouter", [{ type: "key", label: "API key" }]),
-}
-
 export const ElitzaZen = {
   render: renderConnection("opencode", [{ type: "key", label: "API key" }]),
 }

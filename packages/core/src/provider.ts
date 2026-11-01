@@ -124,7 +124,6 @@ const builtins = new Map<string, () => Promise<unknown>>([
     "@elitza/ai/providers/openai-compatible-responses",
     () => import("@elitza/ai/providers/openai-compatible-responses"),
   ],
-  ["@elitza/ai/providers/openrouter", () => import("@elitza/ai/providers/openrouter")],
   ["@elitza/ai/providers/togetherai", () => import("@elitza/ai/providers/togetherai")],
   ["@elitza/ai/providers/venice", () => import("@elitza/ai/providers/venice")],
   ["@elitza/ai/providers/vercel-ai-gateway", () => import("@elitza/ai/providers/vercel-ai-gateway")],

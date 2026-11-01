@@ -142,7 +142,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot හරහා කේතීකරණ සහාය සඳහා AI ආකෘති",
   "dialog.provider.openai.note": "වේගවත්, හැකියාව ඇති සාමාන්‍ය AI කාර්යයන් සඳහා GPT මාදිලි",
   "dialog.provider.google.note": "වේගවත්, ව්‍යුහගත ප්‍රතිචාර සඳහා Gemini ආකෘති",
-  "dialog.provider.openrouter.note": "එක් සැපයුම්කරුවෙකුගෙන් සියලුම සහාය දක්වන මාදිලි වෙත ප්‍රවේශ වන්න",
   "dialog.provider.vercel.note": "ස්මාර්ට් රවුටින් සමඟ AI මාදිලි සඳහා ඒකාබද්ධ ප්‍රවේශය",
   "dialog.model.select.title": "ආකෘතිය තෝරන්න",
   "dialog.model.search.placeholder": "සෙවුම් ආකෘති",

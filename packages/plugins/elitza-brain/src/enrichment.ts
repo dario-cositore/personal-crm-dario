@@ -20,6 +20,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { getClient, updateClient, logInteraction, addAsset } from "./crm.js"
 import { ELITZA_HOME } from "./db.js"
+import { engineConfigPath } from "./configview.js"
+import { pullRecommendedWorksheet, recommendWorksheets } from "./worksheets.js"
 
 const PLAYBOOK_DIR = path.join(ELITZA_HOME, "brain", "procedural")
 const SUBPAGES = ["/", "/about", "/about-us", "/chi-siamo", "/services", "/servizi", "/contact", "/contatti", "/contact-us"]
@@ -92,7 +94,7 @@ function mimoConfig(): { url: string; key: string; model: string } {
   const key = process.env.XIAOMI_API_KEY?.trim() ?? ""
   let url = "https://api.xiaomimimo.com/v1"
   try {
-    const cfg = JSON.parse(require("node:fs").readFileSync(path.join(process.env.HOME ?? "", ".elitza", "home", "config", "opencode.json"), "utf8"))
+    const cfg = JSON.parse(fs.readFileSync(engineConfigPath(), "utf8"))
     const base = cfg?.providers?.elitza?.settings?.baseURL
     if (base) url = String(base).replace(/\/$/, "")
   } catch {
@@ -122,18 +124,19 @@ export interface EnrichmentResult {
   revenue_estimate: string
   employee_count: string
   next_action: string
+  worksheets: string[]
   error?: string
 }
 
 export async function enrichClient(clientId: number): Promise<EnrichmentResult> {
   const client = getClient(clientId)
   if (!client) {
-    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", error: `No client with id ${clientId}.` }
+    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `No client with id ${clientId}.` }
   }
 
   const website = client.website?.trim() || null
   if (!website) {
-    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", error: "No website on file. Set one with crm update first, or run scout to find contact details." }
+    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: "No website on file. Set one with crm update first, or run scout to find contact details." }
   }
 
   const base = /^https?:\/\//i.test(website) ? website.replace(/\/$/, "") : `https://${website.replace(/\/$/, "")}`
@@ -161,7 +164,7 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
 
   const { url: mimoUrl, key: mimoKey, model } = mimoConfig()
   if (!mimoKey) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", error: "XIAOMI_API_KEY is not set." }
+    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: "XIAOMI_API_KEY is not set." }
   }
 
   const systemPrompt = `You are Elitza, an AI Enablement operator. You scout local businesses and design fixed-scope AI enablement sprints (EUR 1,500-3,500). You are given a business's public website content and your own playbooks. Produce a concise, honest enrichment report. Never invent facts; mark unknowns as "unknown".
@@ -254,12 +257,12 @@ Do not include anything outside these sections.`
     })
     if (!res.ok) {
       const detail = await res.text().catch(() => "")
-      return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", error: `MiMo HTTP ${res.status}: ${detail.slice(0, 200)}` }
+      return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `MiMo HTTP ${res.status}: ${detail.slice(0, 200)}` }
     }
     const data = await res.json() as { choices?: { message?: { content?: string } }[] }
     responseText = data.choices?.[0]?.message?.content ?? ""
   } catch (error) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", error: `MiMo call failed: ${String(error)}` }
+    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `MiMo call failed: ${String(error)}` }
   }
 
   // Parse sections.
@@ -286,6 +289,7 @@ Do not include anything outside these sections.`
   const fullProposal = [recommended ? `Recommended service: ${recommended}` : "", scope ? `\nScope:\n${scope}` : "", price ? `\nPrice: ${price}` : ""].filter(Boolean).join("\n")
 
   // Write to CRM.
+  let pulledWorksheets: string[] = []
   try {
     updateClient(clientId, {
       notes: fullDiagnosis || responseText.slice(0, 2000),
@@ -322,8 +326,15 @@ Do not include anything outside these sections.`
     fs.writeFileSync(propPath, `# Proposal — ${client.name}\n\n${fullProposal}\n`)
     addAsset(clientId, { kind: "diagnosis", name: `Diagnosis ${stamp}`, path: diagPath, status: "draft" })
     addAsset(clientId, { kind: "proposal", name: `Proposal ${stamp}`, path: propPath, status: "draft" })
+    // Pull the best-fit interactive worksheet as the empty template for this case.
+    try {
+      const pulls = pullRecommendedWorksheet(clientId, 1)
+      for (const p of pulls) pulledWorksheets.push(p.worksheet.id)
+    } catch {
+      // best-effort: never fail enrichment over a worksheet
+    }
   } catch (error) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: fullDiagnosis, proposal: fullProposal, price, risk_level: riskLevel, risk_score: isNaN(riskScore) ? 0 : riskScore, risk_notes: riskNotes, tech_stack: techStack, revenue_estimate: revenueEstimate, employee_count: employeeCount, next_action: nextAction, error: `CRM write failed: ${String(error)}` }
+    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: fullDiagnosis, proposal: fullProposal, price, risk_level: riskLevel, risk_score: isNaN(riskScore) ? 0 : riskScore, risk_notes: riskNotes, tech_stack: techStack, revenue_estimate: revenueEstimate, employee_count: employeeCount, next_action: nextAction, worksheets: [], error: `CRM write failed: ${String(error)}` }
   }
 
   return {
@@ -343,5 +354,6 @@ Do not include anything outside these sections.`
     revenue_estimate: revenueEstimate,
     employee_count: employeeCount,
     next_action: nextAction || "Review enrichment and decide on proposal.",
+    worksheets: pulledWorksheets,
   }
 }

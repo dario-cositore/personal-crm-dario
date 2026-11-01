@@ -27,6 +27,7 @@
 
 import { addAsset, getClient, logInteraction, updateClient, type AssetInput } from "./crm.js"
 import { nowISO } from "./db.js"
+import { alreadyPulled, pullRecommendedWorksheet, recommendWorksheets } from "./worksheets.js"
 
 export const PRODUCTION_STAGES = [
   "diagnose",
@@ -129,6 +130,15 @@ export function advance(
       occurred_at: nowISO(),
     })
     if (options.asset) addAsset(clientId, options.asset)
+    if (target === "workbook") {
+      try {
+        const client = getClient(clientId)
+        if (client) {
+          const recs = recommendWorksheets(client, 1)
+          if (recs.length && !alreadyPulled(clientId, recs[0].id)) pullRecommendedWorksheet(clientId, 1)
+        }
+      } catch { /* best-effort */ }
+    }
     return { from: target, to: target, next_action: NEXT_ACTIONS[target] }
   }
 
@@ -144,6 +154,21 @@ export function advance(
     occurred_at: nowISO(),
   })
   if (options.asset) addAsset(clientId, options.asset)
+  // Before a workbook-stage case goes to the call, pull the best-fit
+  // interactive worksheet so the operator has the empty template in hand.
+  if (target === "workbook") {
+    try {
+      const client = getClient(clientId)
+      if (client) {
+        const recs = recommendWorksheets(client, 1)
+        if (recs.length && !alreadyPulled(clientId, recs[0].id)) {
+          pullRecommendedWorksheet(clientId, 1)
+        }
+      }
+    } catch {
+      // best-effort
+    }
+  }
   return { from, to: target, next_action: NEXT_ACTIONS[target] }
 }
 
@@ -176,6 +201,14 @@ export function scheduleCall(
     body: note ?? "",
     occurred_at: nowISO(),
   })
+  // Pull the best-fit worksheet ahead of the call so the operator has it open.
+  try {
+    const client = getClient(clientId)
+    if (client) {
+      const recs = recommendWorksheets(client, 1)
+      if (recs.length && !alreadyPulled(clientId, recs[0].id)) pullRecommendedWorksheet(clientId, 1)
+    }
+  } catch { /* best-effort */ }
   return { stage, when }
 }
 

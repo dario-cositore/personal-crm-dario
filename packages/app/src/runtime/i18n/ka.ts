@@ -138,7 +138,6 @@ export const dict = {
   "dialog.provider.copilot.note": "AI მოდელები კოდირების დახმარებისთვის GitHub Copilot",
   "dialog.provider.openai.note": "GPT მოდელები სწრაფი, ზოგადი AI ამოცანების შესასრულებლად",
   "dialog.provider.google.note": "Gemini მოდელები სწრაფი, სტრუქტურირებული პასუხებისთვის",
-  "dialog.provider.openrouter.note": "წვდომა ყველა მხარდაჭერილ მოდელზე ერთი პროვაიდერისგან",
   "dialog.provider.vercel.note": "ერთიანი წვდომა AI მოდელებზე ჭკვიანი მარშრუტით",
   "dialog.model.select.title": "აირჩიეთ მოდელი",
   "dialog.model.search.placeholder": "მოდელების ძიება",

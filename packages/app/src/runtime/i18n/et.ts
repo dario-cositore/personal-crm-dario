@@ -138,7 +138,6 @@ export const dict = {
   "dialog.provider.copilot.note": "AI mudelid kodeerimisabiks GitHub Copilot kaudu",
   "dialog.provider.openai.note": "GPT mudelid kiirete ja võimekate üldiste AI-ülesannete jaoks",
   "dialog.provider.google.note": "Gemini mudelid kiirete ja struktureeritud vastuste jaoks",
-  "dialog.provider.openrouter.note": "Juurdepääs kõigile ühe pakkuja toetatud mudelitele",
   "dialog.provider.vercel.note": "Ühtne juurdepääs AI mudelitele nutika marsruutimisega",
   "dialog.model.select.title": "Valige mudel",
   "dialog.model.search.placeholder": "Otsige mudeleid",

@@ -11,7 +11,6 @@ import {
 import * as Google from "../../src/providers/google.js"
 import * as OpenAI from "../../src/providers/openai.js"
 import * as OpenAICompatible from "../../src/providers/openai-compatible.js"
-import * as OpenRouter from "../../src/providers/openrouter.js"
 import * as XAI from "../../src/providers/xai.js"
 import { describeRecordedGoldenScenarios } from "../recorded-golden.js"
 
@@ -68,13 +67,6 @@ const groq = OpenAICompatible.configure({
 const deepInfra = DeepInfra.configure({ apiKey: process.env.DEEPINFRA_API_KEY ?? "fixture" }).model(
   "meta-llama/Llama-3.3-70B-Instruct-Turbo",
 )
-const openRouter = OpenRouter.configure({ apiKey: process.env.OPENROUTER_API_KEY ?? "fixture" })
-const openrouter = openRouter.model("openai/gpt-4o-mini")
-const openrouterGpt55 = openRouter.model("openai/gpt-5.5")
-const openrouterOpus = OpenRouter.configure({
-  apiKey: process.env.OPENROUTER_API_KEY ?? "fixture",
-}).model("anthropic/claude-opus-4.7")
-
 const redactCloudflareURL = (url: string) =>
   url
     .replace(/\/client\/v4\/accounts\/[^/]+\/ai\/v1\//, "/client/v4/accounts/{account}/ai/v1/")
@@ -260,28 +252,5 @@ describeRecordedGoldenScenarios([
     model: deepInfra,
     requires: ["DEEPINFRA_API_KEY"],
     scenarios: ["text", "tool-call", { id: "tool-loop", timeout: 30_000 }],
-  },
-  {
-    name: "OpenRouter gpt-4o-mini",
-    prefix: "openai-compatible-chat",
-    model: openrouter,
-    requires: ["OPENROUTER_API_KEY"],
-    scenarios: ["text", "tool-call", "tool-loop"],
-  },
-  {
-    name: "OpenRouter gpt-5.5",
-    prefix: "openai-compatible-chat",
-    model: openrouterGpt55,
-    requires: ["OPENROUTER_API_KEY"],
-    tags: ["flagship"],
-    scenarios: ["tool-loop"],
-  },
-  {
-    name: "OpenRouter Claude Opus 4.7",
-    prefix: "openai-compatible-chat",
-    model: openrouterOpus,
-    requires: ["OPENROUTER_API_KEY"],
-    tags: ["flagship"],
-    scenarios: ["tool-loop"],
   },
 ])

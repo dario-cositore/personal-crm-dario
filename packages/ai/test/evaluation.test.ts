@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpClientRequest } from "effect/http"
 import { Evaluation, EvaluationClient } from "../src/experimental.js"
-import { OpenCode, OpenRouter, TypeSafeAI, VercelAIGateway } from "../src/providers.js"
+import { OpenCode, TypeSafeAI, VercelAIGateway } from "../src/providers.js"
 import { it } from "./lib/effect.js"
 import { dynamicResponse } from "./lib/http.js"
 
@@ -144,58 +144,6 @@ describe("experimental Evaluation", () => {
                     model: "jev-1.13.0",
                     answers: { greeting: { type: "noul", noul: 0.99 } },
                     usage: { input_tokens: 10, output_tokens: 2 },
-                  }),
-                  { headers: { "content-type": "application/json" } },
-                ),
-              )
-            }),
-          ),
-        ),
-      ),
-    ),
-  )
-
-  it.effect("evaluates through OpenRouter System One", () =>
-    Evaluation.run({
-      model: OpenRouter.configure({
-        apiKey: "openrouter-key",
-        baseURL: "https://openrouter.test/api/v1",
-      }).experimental.evaluation("typesafe/jev-1.13"),
-      state: "refund",
-      questions: { refund: { type: "boolean", instructions: "Is a refund requested?" } },
-      options: { user: "user-1", session_id: "session-1" },
-    }).pipe(
-      Effect.tap((response) =>
-        Effect.sync(() => {
-          expect(response.answers.refund.probability).toBe(0.98)
-          expect(response.providerMetadata?.openrouter).toMatchObject({ responseId: "gen-1", provider: "TypeSafe" })
-          expect(response.usage?.providerMetadata?.openrouter).toEqual({
-            input_tokens: 10,
-            output_tokens: 2,
-            cost: 0.0001,
-          })
-        }),
-      ),
-      Effect.provide(
-        EvaluationClient.layer.pipe(
-          Layer.provide(
-            dynamicResponse((input) => {
-              expect(input.request.url).toBe("https://openrouter.test/api/v1/systemone")
-              expect(input.request.headers.authorization).toBe("Bearer openrouter-key")
-              expect(JSON.parse(input.text)).toMatchObject({
-                model: "typesafe/jev-1.13",
-                user: "user-1",
-                session_id: "session-1",
-                questions: { refund: { type: "noul" } },
-              })
-              return Effect.succeed(
-                input.respond(
-                  JSON.stringify({
-                    id: "gen-1",
-                    model: "typesafe/jev-1.13-20260917",
-                    provider: "TypeSafe",
-                    answers: { refund: { type: "noul", noul: 0.98 } },
-                    usage: { input_tokens: 10, output_tokens: 2, cost: 0.0001 },
                   }),
                   { headers: { "content-type": "application/json" } },
                 ),

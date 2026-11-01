@@ -450,7 +450,6 @@ function usesAPIKeyAuth(packageName: string | undefined) {
     name === "@ai-sdk/mistral" ||
     name === "@ai-sdk/togetherai" ||
     name === "@ai-sdk/xai" ||
-    name === "@openrouter/ai-sdk-provider" ||
     name === "@ai-sdk/azure" ||
     name === "@elitza/ai/providers/openai" ||
     name?.startsWith("@elitza/ai/providers/openai/") === true ||
@@ -471,7 +470,6 @@ function usesAPIKeyAuth(packageName: string | undefined) {
     name === "@elitza/ai/providers/togetherai" ||
     name === "@elitza/ai/providers/vercel-ai-gateway" ||
     name === "@elitza/ai/providers/xai" ||
-    name === "@elitza/ai/providers/openrouter" ||
     name === "@elitza/ai/providers/azure" ||
     name?.startsWith("@elitza/ai/providers/azure/") === true
   )

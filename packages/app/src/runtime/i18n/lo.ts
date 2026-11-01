@@ -140,7 +140,6 @@ export const dict = {
   "dialog.provider.copilot.note": "ຮູບແບບ AI ສໍາລັບການຊ່ວຍເຫຼືອການເຂົ້າລະຫັດຜ່ານ GitHub Copilot",
   "dialog.provider.openai.note": "ແບບ GPT ສໍາລັບວຽກງານ AI ທົ່ວໄປທີ່ໄວ, ມີຄວາມສາມາດ",
   "dialog.provider.google.note": "ແບບ Gemini ສໍາລັບການຕອບສະຫນອງໄວ, ມີໂຄງສ້າງ",
-  "dialog.provider.openrouter.note": "ເຂົ້າເຖິງທຸກຮູບແບບທີ່ຮອງຮັບຈາກຜູ້ໃຫ້ບໍລິການດຽວ",
   "dialog.provider.vercel.note": "ການເຂົ້າເຖິງແບບຮວມຕົວແບບ AI ດ້ວຍການກຳນົດເສັ້ນທາງອັດສະລິຍະ",
   "dialog.model.select.title": "ເລືອກຕົວແບບ",
   "dialog.model.search.placeholder": "ຄົ້ນຫາຕົວແບບ",

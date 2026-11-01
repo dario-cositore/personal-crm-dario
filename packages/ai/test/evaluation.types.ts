@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Evaluation, EvaluationClient, EvaluationModel, type EvaluationRoute } from "../src/experimental.js"
 import type { Service } from "../src/experimental/evaluation-client.js"
-import { OpenCode, OpenRouter, TypeSafeAI, VercelAIGateway } from "../src/providers.js"
+import { OpenCode, TypeSafeAI, VercelAIGateway } from "../src/providers.js"
 
 type Requirements<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never
 type Success<T> = T extends Effect.Effect<infer A, infer _E, infer _R> ? A : never
@@ -59,20 +59,6 @@ Evaluation.run({
   state: "hello",
   questions: { ok: { type: "boolean", instructions: "OK?" } },
   options: { temperature: "high" },
-})
-
-Evaluation.run({
-  model: OpenRouter.experimental.evaluation("typesafe/jev-1.13"),
-  state: "hello",
-  questions: { ok: { type: "boolean", instructions: "OK?" } },
-  options: { provider: { zdr: true }, session_id: "session-1", user: "user-1" },
-})
-// @ts-expect-error OpenRouter session IDs are strings.
-Evaluation.run({
-  model: OpenRouter.experimental.evaluation("typesafe/jev-1.13"),
-  state: "hello",
-  questions: { ok: { type: "boolean", instructions: "OK?" } },
-  options: { session_id: 1 },
 })
 
 Evaluation.run({

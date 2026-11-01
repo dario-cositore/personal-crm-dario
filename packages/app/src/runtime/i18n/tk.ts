@@ -139,7 +139,6 @@ export const dict = {
   "dialog.provider.copilot.note": "GitHub Copilot arkaly kodlaşdyrmak üçin AI modelleri",
   "dialog.provider.openai.note": "Çalt, başarnykly umumy AI meseleleri üçin GPT modelleri",
   "dialog.provider.google.note": "Çalt, gurluşly jogaplar üçin Gemini modelleri",
-  "dialog.provider.openrouter.note": "Bir üpjün edijiden ähli goldanýan modellere giriň",
   "dialog.provider.vercel.note": "Akylly marşrutizasiýa bilen AI modellerine bitewi giriş",
   "dialog.model.select.title": "Model saýlaň",
   "dialog.model.search.placeholder": "Gözleg modelleri",

@@ -2,26 +2,12 @@ import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { LLM, LLMEvent, LLMResponse, LanguageModel } from "../../src/index.js"
 import * as OpenAICompatible from "../../src/providers/openai-compatible.js"
-import * as OpenRouter from "../../src/providers/openrouter.js"
 import { LLMClient } from "../../src/route.js"
 import { compileRequest } from "../../src/route/client.js"
 import { recordedTests } from "../recorded-test.js"
 import { expectWeatherToolLoop, goldenWeatherToolLoopRequest, runWeatherToolLoop } from "../recorded-scenarios.js"
 
 const cases = [
-  {
-    name: "OpenRouter",
-    model: LanguageModel.update(
-      OpenRouter.configure({
-        apiKey: process.env.OPENROUTER_API_KEY ?? "fixture",
-        providerOptions: { reasoning: { max_tokens: 1024 } },
-      }).model("anthropic/claude-sonnet-4.6"),
-      { compatibility: { reasoningField: "reasoning" } },
-    ),
-    requires: ["OPENROUTER_API_KEY"],
-    cassette: "openrouter-reasoning",
-    structured: true,
-  },
   {
     name: "Vercel AI Gateway",
     model: LanguageModel.update(
@@ -90,10 +76,7 @@ for (const item of cases) {
           expect(replay.body.messages).toMatchObject([
             {
               role: "assistant",
-              content:
-                item.model.route.id === "openrouter"
-                  ? [{ type: "text", text: response.text, cache_control: { type: "ephemeral" } }]
-                  : response.text,
+              content: response.text,
               reasoning: response.reasoning,
             },
           ])

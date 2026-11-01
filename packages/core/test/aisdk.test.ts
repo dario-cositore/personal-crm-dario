@@ -271,7 +271,7 @@ it.effect("leaves max output tokens unset when the request omits them", () =>
     })
 
     const resolved = yield* aisdk.model({
-      ...model("@openrouter/ai-sdk-provider"),
+      ...model("@ai-sdk/openai"),
       limit: { context: 500_000, output: 500_000 },
     })
     const prepared = yield* compileRequest(LLM.request({ model: resolved, prompt: "Hello" }))
