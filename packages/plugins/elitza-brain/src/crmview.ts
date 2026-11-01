@@ -459,6 +459,62 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const result = await enrichClient(Number(body.id))
           return json(result)
         }
+        if (path === "/api/enrich-domains" && req.method === "POST") {
+          const body = await readBody(req)
+          const limit = Math.max(1, Math.min(200, Number(body.limit ?? 25)))
+          const onlyMissing = body.only_missing !== false
+          const free = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com","icloud.com","live.com","aol.com","mail.com","protonmail.com","gmx.com","yandex.com","me.com","msn.com","googlemail.com","hotmail.co.uk","yahoo.co.uk"])
+          const rows = crmDb().query("SELECT DISTINCT email FROM clients WHERE email IS NOT NULL AND email != ''" + (onlyMissing ? " AND (website IS NULL OR website = '')" : "")).all() as any[]
+          const domains = new Set<string>()
+          for (const r of rows) {
+            const e = String(r.email || "")
+            const at = e.indexOf("@")
+            if (at < 0) continue
+            const d = e.slice(at + 1).toLowerCase().trim()
+            if (!d || free.has(d)) continue
+            domains.add(d)
+          }
+          const domainList = Array.from(domains).slice(0, limit)
+          let enriched = 0
+          let failed = 0
+          const details: { domain: string; status: string; title?: string }[] = []
+          for (const domain of domainList) {
+            let info: { title?: string; description?: string; siteName?: string; live: boolean } = { live: false }
+            for (const scheme of ["https", "http"]) {
+              try {
+                const controller = new AbortController()
+                const to = setTimeout(() => controller.abort(), 8000)
+                const res = await fetch(scheme + "://" + domain, { signal: controller.signal, headers: { "User-Agent": "Mozilla/5.0 (compatible; ElitzaEnrich/1.0)" }, redirect: "follow" })
+                clearTimeout(to)
+                if (!res.ok) continue
+                const html = await res.text()
+                info.live = true
+                const titleM = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+                if (titleM) info.title = titleM[1].trim()
+                const descM = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["']/i)
+                if (descM) info.description = descM[1].trim()
+                const ogSite = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']*)["']/i)
+                if (ogSite) info.siteName = ogSite[1].trim()
+                const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i)
+                if (!info.title && ogTitle) info.title = ogTitle[1].trim()
+                break
+              } catch { /* try next scheme */ }
+            }
+            if (!info.live) { failed++; details.push({ domain, status: "unreachable" }); continue }
+            const company = info.siteName || info.title || domain
+            const website = "https://" + domain
+            const noteLine = "Domain enrichment: " + company + (info.description ? " — " + info.description.slice(0, 200) : "")
+            const clients = crmDb().query("SELECT id, notes FROM clients WHERE email LIKE ?").all("%@" + domain) as any[]
+            for (const c of clients) {
+              const existing = c.notes || ""
+              const newNotes = existing ? existing + "\n" + noteLine : noteLine
+              crmDb().run("UPDATE clients SET website = COALESCE(NULLIF(website,''), ?), company = COALESCE(NULLIF(company,''), ?), notes = ?, updated_at = ? WHERE id = ?", [website, company, newNotes, new Date().toISOString(), c.id])
+            }
+            enriched++
+            details.push({ domain, status: "enriched", title: company })
+          }
+          return json({ processed: domainList.length, enriched, failed, total_domains: domains.size, details })
+        }
         if (path === "/api/where" && req.method === "POST") {
           const body = await readBody(req)
           const w = productionState(Number(body.id))

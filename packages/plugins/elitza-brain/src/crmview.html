@@ -728,6 +728,7 @@
             <option value="stale">Stale</option>
             <option value="done">Done</option>
           </select>
+          <button class="btn sm secondary" onclick="enrichDomains()" title="Fetch company websites from email domains (no LLM)">Enrich domains</button>
           <span id="peopleCounter" style="color:var(--text-muted);font-size:13px"></span>
         </div>
         <div style="overflow:auto">
@@ -1146,6 +1147,16 @@ function updatePeopleSortIndicators() {
   document.querySelectorAll('#peopleTable thead .sort-ind').forEach(el => el.textContent = '');
   const el = document.getElementById('sort-' + peopleSort);
   if (el) el.textContent = peopleDir === 'asc' ? '▲' : '▼';
+}
+async function enrichDomains() {
+  const limit = prompt('How many domains to process this batch? (1-200)', '25');
+  if (!limit) return;
+  toast('Enriching domains… this may take a while', 'info');
+  try {
+    const r = await api('/api/enrich-domains', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: Number(limit), only_missing: true }) });
+    toast('Enriched ' + r.enriched + ' of ' + r.processed + ' domains (' + r.failed + ' failed). ' + (r.total_domains - r.processed) + ' remaining.', 'ok');
+    await loadPeople();
+  } catch (e) { toast('Enrich failed: ' + e, 'err'); }
 }
 async function loadPeople() {
   updatePeopleSortIndicators();
