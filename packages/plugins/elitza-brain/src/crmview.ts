@@ -282,6 +282,37 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             return json({ ok: true, path: out })
           } catch (e) { return json({ ok: false, error: String(e) }, 500) }
         }
+        if (path === "/api/settings/maton" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const p = pathMod.join(os.homedir(), ".config", "maton", "credentials.env")
+          let set = false
+          try {
+            const txt = fs.readFileSync(p, "utf8")
+            for (const line of txt.split("\\n")) {
+              const t = line.trim()
+              if (t.startsWith("MATON_API_KEY=") && t.slice("MATON_API_KEY=".length).trim()) { set = true; break }
+            }
+          } catch {}
+          return json({ set })
+        }
+        if (path === "/api/settings/maton" && req.method === "POST") {
+          const body = await readBody(req)
+          const key = String(body.key ?? "").trim()
+          if (!key) return json({ error: "key required" }, 400)
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const dir = pathMod.join(os.homedir(), ".config", "maton")
+          fs.mkdirSync(dir, { recursive: true })
+          const p = pathMod.join(dir, "credentials.env")
+          fs.writeFileSync(p, "MATON_API_KEY=" + key + "\\n", { mode: 0o600 })
+          try { fs.chmodSync(p, 0o600) } catch {}
+          const { soulSet } = await import("./soul.js")
+          soulSet("maton_key", "set")
+          return json({ ok: true, set: true })
+        }
         if (path === "/api/clients" && req.method === "GET") {
           const status = url.searchParams.get("status") ?? undefined
           const query = url.searchParams.get("q") ?? undefined
@@ -479,6 +510,48 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const result = await enrichClient(Number(body.id))
           return json(result)
         }
+        if (path === "/api/knowledge" && req.method === "GET") {
+          const { listKnowledge, memorySearch } = await import("./memory.js")
+          const q = url.searchParams.get("q") ?? ""
+          if (q) return json({ query: q, results: memorySearch(q) })
+          const items = listKnowledge(Number(url.searchParams.get("limit") ?? 50))
+          return json({ items })
+        }
+        if (path === "/api/knowledge" && req.method === "POST") {
+          const body = await readBody(req)
+          const { memoryCreate } = await import("./memory.js")
+          const content = String(body.content ?? "")
+          if (!content.trim()) return json({ error: "content required" }, 400)
+          const tags = Array.isArray(body.tags) ? body.tags : (typeof body.tags === "string" ? body.tags.split(",").map((t: string) => t.trim()).filter(Boolean) : [])
+          const title = String(body.title ?? "").trim()
+          const full = title ? ("# " + title + "\n\n" + content) : content
+          const id = memoryCreate(full, { memoryType: "semantic", importance: Number(body.importance ?? 0.8), tags: ["knowledge", ...tags] })
+          return json({ id, title, tags })
+        }
+        const knowledgeMatch = path.match(/^\/api\/knowledge\/(.+)$/)
+        if (knowledgeMatch && req.method === "DELETE") {
+          const { deleteKnowledge } = await import("./memory.js")
+          return json({ ok: deleteKnowledge(decodeURIComponent(knowledgeMatch[1])) })
+        }
+        if (path === "/api/knowledge/upload" && req.method === "POST") {
+          const body = await readBody(req)
+          const { memoryCreate } = await import("./memory.js")
+          const text = String(body.text ?? "")
+          const name = String(body.name ?? "uploaded")
+          if (!text.trim()) return json({ error: "text required" }, 400)
+          const chunks: string[] = []
+          let cur = ""
+          for (const para of text.split(/\n\n+/)) {
+            if ((cur + para).length > 1500 && cur) { chunks.push(cur.trim()); cur = para } else { cur = cur ? cur + "\n\n" + para : para }
+          }
+          if (cur.trim()) chunks.push(cur.trim())
+          const ids: string[] = []
+          for (let i = 0; i < chunks.length; i++) {
+            const id = memoryCreate("# " + name + " (part " + (i + 1) + "/" + chunks.length + ")\n\n" + chunks[i], { memoryType: "semantic", importance: 0.8, tags: ["knowledge", name] })
+            ids.push(id)
+          }
+          return json({ name, chunks: chunks.length, ids })
+        }
         if (path === "/api/enrich-domains" && req.method === "POST") {
           const body = await readBody(req)
           const limit = Math.max(1, Math.min(200, Number(body.limit ?? 25)))
@@ -634,6 +707,37 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const { continuousBackupStream } = await import("./crm.js")
           const r = await continuousBackupStream()
           return json(r)
+        }
+        if (path === "/api/drive/accounts" && req.method === "GET") {
+          const accs = crmDb().query("SELECT id, provider, account_label, status FROM cloud_accounts WHERE provider IN ('google','gdrive')").all() as any[]
+          return json({ accounts: accs })
+        }
+        if (path === "/api/drive/files" && req.method === "GET") {
+          const accountId = Number(url.searchParams.get("account_id"))
+          const folderId = url.searchParams.get("folder_id") || "root"
+          const acc = crmDb().query("SELECT access_token FROM cloud_accounts WHERE id = ?").get(accountId) as any
+          if (!acc) return json({ error: "account not found" }, 404)
+          const q = folderId === "root" ? "" : "'" + folderId + "' in parents and trashed=false"
+          const params = new URLSearchParams({ pageSize: "50", fields: "files(id,name,mimeType,webViewLink,modifiedTime,size,parents)" })
+          if (q) params.set("q", q)
+          const r = await fetch("https://www.googleapis.com/drive/v3/files?" + params.toString(), { headers: { "Authorization": "Bearer " + acc.access_token } })
+          const data = await r.json() as any
+          if (!r.ok) return json({ error: data?.error?.message || ("drive " + r.status) }, r.status)
+          return json({ files: data.files || [], folder_id: folderId })
+        }
+        if (path === "/api/drive/attach" && req.method === "POST") {
+          const body = await readBody(req)
+          const accountId = Number(body.account_id)
+          const fileId = String(body.file_id ?? "")
+          const clientId = Number(body.client_id)
+          const acc = crmDb().query("SELECT access_token FROM cloud_accounts WHERE id = ?").get(accountId) as any
+          if (!acc) return json({ error: "account not found" }, 404)
+          const r = await fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(fileId) + "?fields=id,name,mimeType,webViewLink", { headers: { "Authorization": "Bearer " + acc.access_token } })
+          const f = await r.json() as any
+          if (!r.ok) return json({ error: f?.error?.message || ("drive " + r.status) }, r.status)
+          const { addAsset } = await import("./crm.js")
+          addAsset(clientId, { kind: "drive", name: f.name || fileId, path: f.webViewLink || ("https://drive.google.com/file/d/" + fileId), notes: f.mimeType || "" })
+          return json({ ok: true, file: f })
         }
         if (path === "/api/revenue" && req.method === "GET") {
           const { revenueStats } = await import("./crm.js")

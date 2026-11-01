@@ -1330,10 +1330,19 @@ async function loadSettings() {
       + '<button class="btn sm secondary" onclick="syncCloud()">Sync now</button>'
       + '<div id="cloudResult" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
       + '</div>'
+      + '<div class="section-card"><h4>Maton.ai API key</h4>'
+      + '<div class="field"><span class="label">Status</span><span class="value" id="matonStatus">—</span></div>'
+      + '<div style="display:flex;gap:6px;margin-top:8px">'
+      + '<input id="matonKeyInput" type="password" placeholder="Paste MATON_API_KEY" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
+      + '<button class="btn sm primary" onclick="saveMatonKey()">Save</button>'
+      + '</div>'
+      + '<div id="matonResult" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
+      + '</div>'
       + '<div class="section-card"><h4>Paths</h4>'
       + '<div class="field"><span class="label">Elitza home</span><span class="value mono" style="font-size:11px">'+esc(d.elitza_home)+'</span></div>'
       + '<div class="field"><span class="label">CRM port</span><span class="value">'+d.crm_port+'</span></div>'
       + '</div>';
+  loadMatonStatus();
   } catch(e) { document.getElementById('settingsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
 }
 async function setVertical(v) {
@@ -1377,6 +1386,24 @@ async function syncCloud() {
   document.getElementById('cloudResult').textContent = r.created ? 'Backup: ' + r.created + ' | Uploaded: ' + r.uploaded : 'Sync failed: ' + (r.errors||[]).join('; ');
   toast(r.uploaded ? 'Synced to ' + r.uploaded + ' account(s)' : 'Sync failed', r.uploaded ? 'ok' : 'err');
   loadCloudAccounts();
+}
+async function loadMatonStatus() {
+  try {
+    const d = await api('/api/settings/maton');
+    const el = document.getElementById('matonStatus');
+    if (el) el.textContent = d.set ? 'Set (mode 600)' : 'Not set';
+  } catch (e) {}
+}
+async function saveMatonKey() {
+  const key = document.getElementById('matonKeyInput').value.trim();
+  if (!key) { toast('Key required', 'err'); return; }
+  try {
+    await api('/api/settings/maton', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+    document.getElementById('matonKeyInput').value = '';
+    document.getElementById('matonResult').textContent = 'Saved securely (mode 600).';
+    toast('Maton key saved', 'ok');
+    loadMatonStatus();
+  } catch (e) { toast('Failed: ' + e, 'err'); }
 }
 
 async function loadRevenue() {
