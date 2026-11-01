@@ -83,6 +83,9 @@ const SCHEMA = `
       facebook TEXT,
       instagram TEXT,
       company TEXT,
+      priority_tier TEXT,
+      tier INTEGER,
+      tier_label TEXT,
       risk_level TEXT,
       risk_score INTEGER,
       risk_notes TEXT,
@@ -249,6 +252,16 @@ const SCHEMA = `
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS scout_runs_created ON scout_runs(created_at);
+
+  CREATE TABLE IF NOT EXISTS segments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      filter TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS segments_name ON segments(name);
 `
 
 /** A row shipped before this column existed must gain it, or the cadence reads null. */
@@ -267,6 +280,9 @@ function migrate(db: Database): void {
     { name: "facebook", type: "TEXT" },
     { name: "instagram", type: "TEXT" },
     { name: "company", type: "TEXT" },
+    { name: "priority_tier", type: "TEXT" },
+    { name: "tier", type: "INTEGER" },
+    { name: "tier_label", type: "TEXT" },
     { name: "risk_level", type: "TEXT" },
     { name: "risk_score", type: "INTEGER" },
     { name: "risk_notes", type: "TEXT" },
@@ -323,6 +339,9 @@ export interface Client {
   facebook: string | null
   instagram: string | null
   company: string | null
+  priority_tier: string | null
+  tier: number | null
+  tier_label: string | null
   risk_level: string | null
   risk_score: number | null
   risk_notes: string | null
@@ -356,6 +375,9 @@ export interface ClientInput {
   facebook?: string
   instagram?: string
   company?: string
+  priority_tier?: string
+  tier?: number
+  tier_label?: string
   risk_level?: string
   risk_score?: number
   risk_notes?: string
@@ -472,6 +494,9 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
     "facebook",
     "instagram",
     "company",
+    "priority_tier",
+    "tier",
+    "tier_label",
     "risk_level",
     "risk_score",
     "risk_notes",
@@ -507,6 +532,9 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
         input.facebook ?? null,
         input.instagram ?? null,
         input.company ?? null,
+        input.priority_tier ?? null,
+        input.tier ?? null,
+        input.tier_label ?? null,
         input.risk_level ?? null,
         input.risk_score ?? null,
         input.risk_notes ?? null,
@@ -591,6 +619,103 @@ export function listCompanies(): { name: string; count: number }[] {
   return rows.map((r) => ({ name: r.company, count: r.c }))
 }
 
+export interface SegmentFilter {
+  status?: string
+  min_score?: number
+  max_score?: number
+  tags?: string[]
+  source_contains?: string
+  query?: string
+  priority?: string
+  company_contains?: string
+  has_email?: boolean
+  has_phone?: boolean
+  has_website?: boolean
+  tier?: number
+}
+
+export interface Segment {
+  id: number
+  name: string
+  description: string | null
+  filter: SegmentFilter
+  created_at: string
+  updated_at: string
+}
+
+function buildSegmentWhere(f: SegmentFilter): { sql: string; params: any[] } {
+  const filters: string[] = []
+  const params: any[] = []
+  if (f.status) { filters.push("status = ?"); params.push(f.status) }
+  if (typeof f.min_score === "number") { filters.push("score >= ?"); params.push(f.min_score) }
+  if (typeof f.max_score === "number") { filters.push("score <= ?"); params.push(f.max_score) }
+  if (f.source_contains) { filters.push("source LIKE ?"); params.push("%" + f.source_contains + "%") }
+  if (f.query) { const like = "%" + f.query + "%"; filters.push("(name LIKE ? OR email LIKE ? OR notes LIKE ? OR company LIKE ?)"); params.push(like, like, like, like) }
+  if (f.priority) { filters.push("priority_tier = ?"); params.push(f.priority) }
+  if (f.company_contains) { filters.push("company LIKE ?"); params.push("%" + f.company_contains + "%") }
+  if (f.has_email) { filters.push("email IS NOT NULL AND email != ''") }
+  if (f.has_phone) { filters.push("phone IS NOT NULL AND phone != ''") }
+  if (f.has_website) { filters.push("website IS NOT NULL AND website != ''") }
+  if (typeof f.tier === "number") { filters.push("tier = ?"); params.push(f.tier) }
+  if (f.tags && f.tags.length) {
+    // clients having any of these tags
+    const placeholders = f.tags.map(() => "?").join(",")
+    filters.push("id IN (SELECT ct.client_id FROM client_tags ct JOIN tags t ON t.id=ct.tag_id WHERE t.name IN (" + placeholders + "))")
+    params.push(...f.tags)
+  }
+  const where = filters.length ? "WHERE " + filters.join(" AND ") : ""
+  return { sql: where, params }
+}
+
+export function saveSegment(name: string, description: string | null, filter: SegmentFilter): number {
+  const now = new Date().toISOString()
+  const r = crmDb().run(
+    "INSERT INTO segments (name, description, filter, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    [name, description, JSON.stringify(filter || {}), now, now],
+  )
+  return Number(r.lastInsertRowid)
+}
+
+export function updateSegment(id: number, name: string, description: string | null, filter: SegmentFilter): void {
+  const now = new Date().toISOString()
+  crmDb().run(
+    "UPDATE segments SET name = ?, description = ?, filter = ?, updated_at = ? WHERE id = ?",
+    [name, description, JSON.stringify(filter || {}), now, id],
+  )
+}
+
+export function deleteSegment(id: number): void {
+  crmDb().run("DELETE FROM segments WHERE id = ?", [id])
+}
+
+export function getSegment(id: number): Segment | null {
+  const r = crmDb().query("SELECT id, name, description, filter, created_at, updated_at FROM segments WHERE id = ?").get(id) as any
+  if (!r) return null
+  let filter: SegmentFilter = {}
+  try { filter = JSON.parse(r.filter) } catch {}
+  return { id: r.id, name: r.name, description: r.description, filter, created_at: r.created_at, updated_at: r.updated_at }
+}
+
+export function listSegments(): Segment[] {
+  const rows = crmDb().query("SELECT id, name, description, filter, created_at, updated_at FROM segments ORDER BY updated_at DESC").all() as any[]
+  return rows.map((r) => {
+    let filter: SegmentFilter = {}
+    try { filter = JSON.parse(r.filter) } catch {}
+    return { id: r.id, name: r.name, description: r.description, filter, created_at: r.created_at, updated_at: r.updated_at }
+  })
+}
+
+export function countSegmentMembers(filter: SegmentFilter): number {
+  const { sql, params } = buildSegmentWhere(filter || {})
+  const r = crmDb().query("SELECT COUNT(*) as c FROM clients " + sql).get(...(params as any)) as { c: number }
+  return r.c
+}
+
+export function listSegmentMembers(filter: SegmentFilter, limit = 100, offset = 0): any[] {
+  const { sql, params } = buildSegmentWhere(filter || {})
+  return crmDb().query("SELECT * FROM clients " + sql + " ORDER BY updated_at DESC LIMIT ? OFFSET ?").all(...(params as any), limit, offset) as any[]
+}
+
 export interface ScoutRun {
   id: number
   location: string
@@ -658,6 +783,9 @@ const UPDATABLE = [
   "facebook",
   "instagram",
   "company",
+  "priority_tier",
+  "tier",
+  "tier_label",
   "risk_level",
   "risk_score",
   "risk_notes",

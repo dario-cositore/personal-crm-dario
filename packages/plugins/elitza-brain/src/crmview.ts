@@ -10,7 +10,7 @@
  * the engine (elitza serve) starts and goes down when it stops.
  */
 
-import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun } from "./crm.js"
+import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers } from "./crm.js"
 import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
@@ -416,6 +416,43 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
         if (scoutRunMatch && req.method === "DELETE") {
           deleteScoutRun(Number(scoutRunMatch[1]))
           return json({ ok: true })
+        }
+        if (path === "/api/segments" && req.method === "GET") {
+          const segs = listSegments().map((s) => ({ ...s, count: countSegmentMembers(s.filter) }))
+          return json({ segments: segs })
+        }
+        if (path === "/api/segments" && req.method === "POST") {
+          const body = await readBody(req)
+          const id = saveSegment(String(body.name ?? "Untitled"), body.description ?? null, body.filter ?? {})
+          const seg = getSegment(id)
+          return json({ segment: seg, count: countSegmentMembers(seg?.filter ?? {}) })
+        }
+        const segMatch = path.match(/^\/api\/segments\/(\d+)$/)
+        if (segMatch && req.method === "GET") {
+          const seg = getSegment(Number(segMatch[1]))
+          if (!seg) return json({ error: "not found" }, 404)
+          return json({ segment: seg, count: countSegmentMembers(seg.filter) })
+        }
+        if (segMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          updateSegment(Number(segMatch[1]), String(body.name ?? "Untitled"), body.description ?? null, body.filter ?? {})
+          const seg = getSegment(Number(segMatch[1]))
+          return json({ segment: seg, count: countSegmentMembers(seg?.filter ?? {}) })
+        }
+        if (segMatch && req.method === "DELETE") {
+          deleteSegment(Number(segMatch[1]))
+          return json({ ok: true })
+        }
+        const segMembersMatch = path.match(/^\/api\/segments\/(\d+)\/members$/)
+        if (segMembersMatch && req.method === "GET") {
+          const seg = getSegment(Number(segMembersMatch[1]))
+          if (!seg) return json({ error: "not found" }, 404)
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 50)))
+          const page = Math.max(1, Number(url.searchParams.get("page") ?? 1))
+          const offset = (page - 1) * limit
+          const members = listSegmentMembers(seg.filter, limit, offset)
+          const total = countSegmentMembers(seg.filter)
+          return json({ members, total, page, per_page: limit })
         }
         if (path === "/api/enrich" && req.method === "POST") {
           const body = await readBody(req)
