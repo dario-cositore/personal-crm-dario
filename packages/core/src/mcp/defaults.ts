@@ -51,6 +51,11 @@ export const DEFAULT_MCP_SERVERS: Record<string, Mcp.ServerConfig> = {
     command: ["npx", "-y", "@modelcontextprotocol/server-time"],
     codemode: true,
   },
+  resend: {
+    type: "remote",
+    url: "https://mcp.resend.com/mcp",
+    codemode: true,
+  },
   xerj: {
     type: "local",
     command: ["xerj", "mcp"],
