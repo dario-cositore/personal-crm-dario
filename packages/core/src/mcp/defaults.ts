@@ -56,6 +56,21 @@ export const DEFAULT_MCP_SERVERS: Record<string, Mcp.ServerConfig> = {
     url: "https://mcp.resend.com/mcp",
     codemode: true,
   },
+  context7: {
+    type: "remote",
+    url: "https://mcp.context7.com/mcp",
+    codemode: true,
+  },
+  exa: {
+    type: "remote",
+    url: "https://mcp.exa.ai/mcp",
+    codemode: true,
+  },
+  tavily: {
+    type: "remote",
+    url: "https://mcp.tavily.com/mcp",
+    codemode: true,
+  },
   xerj: {
     type: "local",
     command: ["xerj", "mcp"],
