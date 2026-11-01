@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;510;590;680&display=swap" rel="stylesheet">
+<script>
+  (function() {
+    try {
+      var t = localStorage.getItem('elitza-theme');
+      if (!t) t = 'light'; // default to light
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
     /* Linear-inspired tokens */
@@ -50,6 +59,45 @@
     --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     --transition: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   }
+  /* Light theme (WCAG AA compliant) */
+  html[data-theme="light"] {
+    --bg: #f5f6f8;
+    --bg-panel: #ffffff;
+    --bg-elevated: #eef0f3;
+    --bg-hover: #e4e6eb;
+    --bg-active: #d9dce3;
+    --bg-input: #ffffff;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.14);
+    --border-focus: rgba(94,106,210,0.6);
+    --text: #1a1d23;
+    --text-secondary: #374151;
+    --text-tertiary: #4b5563;
+    --text-muted: #6b7280;
+    --text-disabled: #9ca3af;
+    --accent: #4f5bd5;
+    --accent-hover: #3f4bc4;
+    --accent-soft: rgba(94,106,210,0.10);
+    --accent-glow: rgba(94,106,210,0.20);
+    --ok: #1a7f37;
+    --ok-soft: rgba(26,127,55,0.10);
+    --warn: #8a6a00;
+    --warn-soft: rgba(138,106,0,0.10);
+    --err: #c0392b;
+    --err-soft: rgba(192,57,43,0.10);
+    --info: #1a73e8;
+    --info-soft: rgba(26,115,232,0.10);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.04);
+    --shadow-lg: 0 16px 48px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.06);
+    --shadow-glow: 0 0 0 1px var(--accent), 0 0 20px var(--accent-glow);
+  }
+  html[data-theme="light"] body { background: var(--bg); color: var(--text); }
+  html[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border: 2px solid var(--bg); }
+  html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.20); }
+  html[data-theme="light"] .sidebar-logo .mark { box-shadow: 0 0 0 1px rgba(0,0,0,0.08) inset, 0 2px 8px rgba(113,112,255,0.2); }
+  html[data-theme="light"] .topbar { background: var(--bg-panel); }
+  html[data-theme="light"] .sidebar { background: var(--bg-panel); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; }
   body {
@@ -676,7 +724,8 @@
         <button class="btn ghost" onclick="setViewMode('table')" style="padding:4px 10px;font-size:12px">Table</button>
       </div>
       <div class="status"><div class="dot"></div><span id="statusText">Ready</span></div>
-      <button class="btn ghost sm" onclick="toggleChat()" title="Quick chat" style="margin-left:8px;padding:4px 8px">💬</button>
+      <button class="btn ghost sm" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark" style="margin-left:8px;padding:4px 8px">🌙</button>
+      <button class="btn ghost sm" onclick="toggleChat()" title="Quick chat" style="margin-left:4px;padding:4px 8px">💬</button>
       <button class="btn sm secondary" onclick="loadBoard();loadQueue();toast('Refreshed','ok')" style="margin-left:4px">↻ Refresh</button>
     </div>
     <div class="content">
@@ -2122,6 +2171,23 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey||e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdk(); }
   if (e.key === 'Escape') closeCmdk();
 });
+
+function applyThemeIcon() {
+  const t = document.documentElement.getAttribute('data-theme') || 'dark';
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = t === 'light' ? '🌙' : '☀️';
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('elitza-theme', next); } catch (e) {}
+  applyThemeIcon();
+}
+// sync icon on load
+document.addEventListener('DOMContentLoaded', applyThemeIcon);
+// also run now in case DOM ready
+setTimeout(applyThemeIcon, 0);
 
 function toggleChat() {
   const p = document.getElementById('chatPanel');
