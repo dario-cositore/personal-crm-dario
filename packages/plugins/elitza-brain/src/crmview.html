@@ -726,7 +726,8 @@
         <button class="btn ghost" onclick="setViewMode('table')" style="padding:4px 10px;font-size:12px">Table</button>
       </div>
       <div class="status"><div class="dot"></div><span id="statusText">Ready</span></div>
-      <button class="btn ghost sm" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark" style="margin-left:8px;padding:4px 8px">🌙</button>
+      <button class="btn ghost sm" id="wizardToggle" onclick="openWizard()" title="Setup wizard" style="margin-left:8px;padding:4px 8px">🧙</button>
+      <button class="btn ghost sm" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark" style="margin-left:4px;padding:4px 8px">🌙</button>
       <button class="btn ghost sm" onclick="toggleChat()" title="Quick chat" style="margin-left:4px;padding:4px 8px">💬</button>
       <button class="btn sm secondary" onclick="loadBoard();loadQueue();toast('Refreshed','ok')" style="margin-left:4px">↻ Refresh</button>
     </div>
@@ -1405,6 +1406,71 @@ async function saveMatonKey() {
     loadMatonStatus();
   } catch (e) { toast('Failed: ' + e, 'err'); }
 }
+
+const WIZARD_KEYS = [
+  { name: 'XIAOMI_API_KEY', label: 'Xiaomi MiMo API key', desc: 'Powers the AI model (MiMo v2.6 Flash). Required.', link: 'https://platform.xiaomimimo.com', affiliate: 'Invite code HFSR94 — 10% off first paid Token Plan', required: true, target: 'env' },
+  { name: 'GOOGLE_MAPS_API_KEY', label: 'Google Maps / Places API key', desc: 'Used by scouting to find local businesses. Optional but recommended.', link: 'https://console.cloud.google.com/apis/credentials', required: false, target: 'env' },
+  { name: 'RESEND_API_KEY', label: 'Resend API key', desc: 'Sends outreach emails (only after your approval). Optional.', link: 'https://resend.com/api-keys', required: false, target: 'env' },
+  { name: 'RESEND_FROM', label: 'Resend from address', desc: 'Verified sender address, e.g. you@yourdomain.com. Required if using Resend.', link: 'https://resend.com/domains', required: false, target: 'env' },
+  { name: 'MATON_API_KEY', label: 'Maton.ai API key', desc: 'Gateway for GitHub and other integrations. Optional.', link: 'https://maton.ai', required: false, target: 'maton' },
+];
+
+async function openWizard() {
+  document.getElementById('wizardModal').classList.add('open');
+  await renderWizard();
+}
+function closeWizard() { document.getElementById('wizardModal').classList.remove('open'); }
+async function wizardCheckStatus() { await renderWizard(); toast('Status refreshed', 'ok'); }
+async function renderWizard() {
+  let status = {};
+  try { status = await api('/api/settings/secrets-status'); } catch (e) { status = {}; }
+  const maton = await api('/api/settings/maton').catch(() => ({ set: false }));
+  const body = document.getElementById('wizardBody');
+  body.innerHTML = WIZARD_KEYS.map(k => {
+    const isSet = k.target === 'maton' ? !!maton.set : !!status[k.name.toLowerCase().replace(/_/g,'_') || k.name];
+    // map names to status keys
+    let setFlag = false;
+    if (k.target === 'maton') setFlag = !!maton.set;
+    else if (k.name === 'XIAOMI_API_KEY') setFlag = !!status.xiaomi;
+    else if (k.name === 'GOOGLE_MAPS_API_KEY') setFlag = !!status.google_maps;
+    else if (k.name === 'RESEND_API_KEY') setFlag = !!status.resend;
+    else if (k.name === 'RESEND_FROM') setFlag = !!status.resend_from;
+    const statusBadge = setFlag ? '<span style="color:var(--ok);font-weight:600;font-size:11px">✓ Set</span>' : '<span style="color:var(--err);font-weight:600;font-size:11px">✗ Not set' + (k.required ? ' (required)' : '') + '</span>';
+    return '<div class="section-card" style="padding:12px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:13px">' + esc(k.label) + '</strong>' + statusBadge + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">' + esc(k.desc) + '</div>' +
+      (k.affiliate ? '<div style="font-size:11px;color:var(--accent);margin-bottom:6px">' + esc(k.affiliate) + '</div>' : '') +
+      '<div style="font-size:11px;margin-bottom:6px"><a href="' + esc(k.link) + '" target="_blank" style="color:var(--accent)">Get key ↗</a></div>' +
+      '<div style="display:flex;gap:6px">' +
+      '<input id="wiz_' + k.name + '" type="password" placeholder="Paste ' + esc(k.name) + '" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">' +
+      '<button class="btn sm primary" onclick="saveWizardKey(\'' + k.name + '\',\'' + k.target + '\')">Save</button>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+}
+async function saveWizardKey(name, target) {
+  const val = document.getElementById('wiz_' + name).value.trim();
+  if (!val) { toast('Key required', 'err'); return; }
+  try {
+    if (target === 'maton') {
+      await api('/api/settings/maton', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: val }) });
+    } else {
+      await api('/api/settings/secret', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, value: val }) });
+    }
+    document.getElementById('wiz_' + name).value = '';
+    toast(name + ' saved', 'ok');
+    await renderWizard();
+  } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+// First-boot auto-open
+(async function() {
+  try {
+    const s = await api('/api/settings/secrets-status');
+    if (!s.xiaomi) {
+      setTimeout(() => openWizard(), 500);
+    }
+  } catch (e) {}
+})();
 
 async function loadRevenue() {
   try {
@@ -2444,6 +2510,17 @@ document.addEventListener('DOMContentLoaded', () => {
       <button class="btn secondary sm" onclick="closeSegmentModal()">Cancel</button>
       <button class="btn secondary sm" onclick="previewSegment()">Preview count</button>
       <button class="btn sm" onclick="submitSegment()">Save</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay" id="wizardModal">
+  <div class="modal" style="width:620px;max-height:90vh">
+    <h3>Setup wizard — API keys</h3>
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">Elitza needs a few API keys to function. Paste them below. Keys are stored locally with mode 600 and never leave your machine. Affiliate/referral links included.</p>
+    <div id="wizardBody" style="display:flex;flex-direction:column;gap:14px"></div>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn secondary sm" onclick="closeWizard()">Close</button>
+      <button class="btn sm" onclick="wizardCheckStatus()">Refresh status</button>
     </div>
   </div>
 </div>

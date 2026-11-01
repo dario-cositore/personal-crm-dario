@@ -313,6 +313,63 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           soulSet("maton_key", "set")
           return json({ ok: true, set: true })
         }
+        if (path === "/api/settings/secret" && req.method === "POST") {
+          const body = await readBody(req)
+          const name = String(body.name ?? "").trim()
+          const value = String(body.value ?? "").trim()
+          if (!name || !value) return json({ error: "name and value required" }, 400)
+          const allowed = new Set(["XIAOMI_API_KEY", "GOOGLE_MAPS_API_KEY", "RESEND_API_KEY", "RESEND_FROM"])
+          if (!allowed.has(name)) return json({ error: "unknown secret" }, 400)
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const envPath = pathMod.join(home, ".env")
+          // read existing
+          let lines: string[] = []
+          try { lines = fs.readFileSync(envPath, "utf8").split("\\n") } catch {}
+          const filtered = lines.filter((l) => !l.trim().startsWith(name + "="))
+          filtered.push(name + "=" + value)
+          fs.mkdirSync(pathMod.dirname(envPath), { recursive: true })
+          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\\n") + "\\n", { mode: 0o600 })
+          try { fs.chmodSync(envPath, 0o600) } catch {}
+          const { soulSet } = await import("./soul.js")
+          soulSet(name.toLowerCase().replace(/_/g, "_"), "set")
+          return json({ ok: true, set: true })
+        }
+        if (path === "/api/settings/secrets-status" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const envPath = pathMod.join(home, ".env")
+          let env: Record<string, string> = {}
+          try {
+            for (const line of fs.readFileSync(envPath, "utf8").split("\\n")) {
+              const t = line.trim()
+              if (!t || t.startsWith("#")) continue
+              const eq = t.indexOf("=")
+              if (eq < 0) continue
+              env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim()
+            }
+          } catch {}
+          // maton
+          let matonSet = false
+          try {
+            const p = pathMod.join(os.homedir(), ".config", "maton", "credentials.env")
+            for (const line of fs.readFileSync(p, "utf8").split("\\n")) {
+              const t = line.trim()
+              if (t.startsWith("MATON_API_KEY=") && t.slice("MATON_API_KEY=".length).trim()) { matonSet = true }
+            }
+          } catch {}
+          return json({
+            xiaomi: !!env["XIAOMI_API_KEY"],
+            google_maps: !!env["GOOGLE_MAPS_API_KEY"],
+            resend: !!env["RESEND_API_KEY"],
+            resend_from: !!env["RESEND_FROM"],
+            maton: matonSet,
+          })
+        }
         if (path === "/api/clients" && req.method === "GET") {
           const status = url.searchParams.get("status") ?? undefined
           const query = url.searchParams.get("q") ?? undefined
