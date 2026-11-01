@@ -301,6 +301,26 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (q) companies = companies.filter((c) => c.name.toLowerCase().includes(q))
           return json({ companies, total: companies.length })
         }
+        if (path === "/api/company" && req.method === "GET") {
+          const name = url.searchParams.get("name") ?? ""
+          if (!name) return json({ error: "name required" }, 400)
+          const clients = crmDb().query("SELECT * FROM clients WHERE company = ? ORDER BY updated_at DESC").all(name) as any[]
+          // derive domain from contacts' emails
+          const free = new Set(["gmail.com","yahoo.com","hotmail.com","outlook.com","icloud.com","live.com","aol.com","mail.com","protonmail.com","gmx.com","yandex.com","me.com","msn.com","googlemail.com"])
+          const domainCounts = new Map<string, number>()
+          for (const c of clients) {
+            const e = String(c.email || "")
+            const at = e.indexOf("@")
+            if (at < 0) continue
+            const d = e.slice(at + 1).toLowerCase().trim()
+            if (!d || free.has(d)) continue
+            domainCounts.set(d, (domainCounts.get(d) || 0) + 1)
+          }
+          let topDomain = ""
+          let topCount = 0
+          for (const [d, n] of domainCounts) { if (n > topCount) { topCount = n; topDomain = d } }
+          return json({ name, clients, count: clients.length, domain: topDomain })
+        }
         const clientMatch = path.match(/^\/api\/clients\/(\d+)$/)
         if (clientMatch && req.method === "GET") {
           const id = Number(clientMatch[1])

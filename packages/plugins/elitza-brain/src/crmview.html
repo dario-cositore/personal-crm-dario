@@ -557,6 +557,13 @@
   .scout-pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); animation: pulse 1.2s infinite; margin-right:6px; }
   @keyframes pulse { 0%,100% { opacity:.3; transform:scale(.8);} 50% { opacity:1; transform:scale(1.2);} }
   .scout-status { font-size:12.5px; color:var(--text-secondary); margin-bottom:8px; }
+  #peopleTable { border-collapse:separate; border-spacing:0; }
+  #peopleTable thead th { position:sticky; top:0; background:var(--bg-panel); z-index:2; padding:10px 12px; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-muted); border-bottom:1px solid var(--border); }
+  #peopleTable tbody tr { transition:background .12s; }
+  #peopleTable tbody tr:hover { background:var(--bg-hover); }
+  #peopleTable tbody td { padding:10px 12px; font-size:13px; border-bottom:1px solid var(--border); }
+  #peopleTable tbody tr:last-child td { border-bottom:none; }
+  .people-avatar { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#5e6ad2,#8b93e8); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; color:#fff; margin-right:8px; vertical-align:middle; }
   .chat-full { display:flex; flex-direction:column; height: calc(100vh - 200px); min-height:400px; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; }
   .chat-full-messages { flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
   .chat-full-input { border-top:1px solid var(--border); padding:12px; display:flex; flex-direction:column; gap:8px; background:var(--bg-elevated); }
@@ -901,6 +908,7 @@
           </div>
         </div>
       </div>
+      <div id="companydetail" class="view"></div>
       <div id="detail" class="view"></div>
     </div>
   </div>
@@ -976,7 +984,7 @@ function showView(name, el) {
     target = Array.from(document.querySelectorAll('.nav-item')).find(b => (b.getAttribute('onclick')||'').indexOf("'"+name+"'") !== -1);
   }
   if (target) target.classList.add('active');
-  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator']};
+  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator']};
   if (titles[name]) { document.getElementById('topTitle').textContent = titles[name][0]; document.getElementById('topSubtitle').textContent = titles[name][1]; }
 }
 
@@ -1174,7 +1182,7 @@ async function loadPeople() {
     const total = (typeof data.total === 'number') ? data.total : clients.length;
     const tbody = document.getElementById('peopleTableBody');
     tbody.innerHTML = clients.map(c =>
-      '<tr onclick="openDetail('+c.id+')" style="cursor:pointer"><td>'+esc(c.name)+'</td><td>'+esc(c.email||'—')+'</td><td>'+esc(c.phone||'—')+'</td><td>'+esc(c.score==null?'—':c.score)+'</td><td>'+esc(c.source||'—')+'</td><td><span class="pill '+(STATUS_COLOR[c.status]||'')+'">'+(STATUS_LABEL[c.status]||c.status)+'</span></td></tr>').join('');
+      '<tr onclick="openDetail('+c.id+')" style="cursor:pointer"><td><span class="people-avatar">'+esc(initials(c.name))+'</span>'+esc(c.name)+'</td><td>'+esc(c.email||'—')+'</td><td>'+esc(c.phone||'—')+'</td><td>'+esc(c.score==null?'—':c.score)+'</td><td>'+esc(c.source||'—')+'</td><td><span class="pill '+(STATUS_COLOR[c.status]||'')+'">'+(STATUS_LABEL[c.status]||c.status)+'</span></td></tr>').join('');
     if (!clients.length) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No people.</td></tr>';
     const counter = document.getElementById('peopleCounter');
     if (counter) counter.textContent = 'Showing ' + clients.length + ' of ' + total;
@@ -1195,7 +1203,7 @@ async function loadCompanies() {
     const companies = data.companies || [];
     const tbody = document.getElementById('companiesTableBody');
     tbody.innerHTML = companies.map(c =>
-      '<tr style="cursor:pointer" onclick="showView(\'people\',null); document.getElementById(\'peopleSearch\').value=' + JSON.stringify(c.name) + '; loadPeople()"><td>'+esc(c.name)+'</td><td>'+esc(c.count)+'</td></tr>').join('');
+      '<tr style="cursor:pointer" onclick="openCompanyDetail(' + JSON.stringify(c.name) + ')"><td>'+esc(c.name)+'</td><td>'+esc(c.count)+'</td></tr>').join('');
     if (!companies.length) tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text-muted)">No companies.</td></tr>';
     const counter = document.getElementById('companiesCounter');
     if (counter) counter.textContent = companies.length + ' of ' + (data.total || companies.length);
@@ -2018,6 +2026,53 @@ async function deleteSegment(id) {
     await loadSegments();
     document.getElementById('segmentDetail').innerHTML = '<div style="color:var(--text-muted);font-size:13px">Select a segment to view its members, or create a new one.</div>';
   } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+
+async function openCompanyDetail(name) {
+  const body = document.getElementById('companydetail');
+  body.innerHTML = '<div class="page-header" style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><button class="btn secondary sm" onclick="showView(\'companies\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Back</button><div><h1 style="font-size:20px;font-weight:590;letter-spacing:-0.4px;margin:0">' + esc(name) + '</h1><p style="color:var(--text-muted);font-size:13px;margin:2px 0 0">Company profile</p></div></div><div style="color:var(--text-muted)">Loading…</div>';
+  showView('companydetail');
+  try {
+    const data = await api('/api/company?name=' + encodeURIComponent(name));
+    const clients = data.clients || [];
+    const domain = data.domain || '';
+    let html = '<div class="page-header" style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'
+      + '<button class="btn secondary sm" onclick="showView(\'companies\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Back</button>'
+      + '<div><h1 style="font-size:20px;font-weight:590;letter-spacing:-0.4px;margin:0">' + esc(name) + '</h1>'
+      + '<p style="color:var(--text-muted);font-size:13px;margin:2px 0 0">' + clients.length + ' contact(s)' + (domain ? ' · domain: ' + esc(domain) : '') + '</p></div>'
+      + (domain ? '<div style="margin-left:auto"><a class="btn sm" href="https://' + esc(domain) + '" target="_blank">Open website</a> <button class="btn sm secondary" onclick="enrichCompanyDomain(' + JSON.stringify(domain) + ')">Enrich domain</button></div>' : '')
+      + '</div>';
+    // enrichment info from first client with notes
+    const sample = clients.find(c => c.notes);
+    html += '<div class="detail-grid">';
+    html += '<div class="section-card"><h4>Overview</h4>'
+      + '<div class="field"><span class="label">Contacts</span><span class="value">' + clients.length + '</span></div>'
+      + '<div class="field"><span class="label">Domain</span><span class="value">' + (domain ? webLink('https://' + domain) : '—') + '</span></div>'
+      + '<div class="field"><span class="label">Statuses</span><span class="value">' + [...new Set(clients.map(c=>c.status))].map(s=>'<span class="pill '+(STATUS_COLOR[s]||'')+'">'+(STATUS_LABEL[s]||s)+'</span>').join(' ') + '</span></div>'
+      + '</div>';
+    // linked contacts
+    html += '<div class="section-card" style="grid-column:1/-1"><h4>Linked contacts (' + clients.length + ')</h4>';
+    if (!clients.length) {
+      html += '<div class="empty-state" style="padding:20px"><p>No contacts linked to this company.</p></div>';
+    } else {
+      html += '<table class="scout-table" style="width:100%"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Score</th></tr></thead><tbody>';
+      html += clients.map(c =>
+        '<tr style="cursor:pointer" onclick="openDetail(' + c.id + ')"><td>' + esc(c.name) + '</td><td>' + esc(c.email||'—') + '</td><td>' + esc(c.phone||'—') + '</td><td><span class="pill ' + (STATUS_COLOR[c.status]||'') + '">' + (STATUS_LABEL[c.status]||c.status) + '</span></td><td>' + (c.score??'—') + '</td></tr>').join('');
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    html += '</div>';
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = '<div class="page-header" style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><button class="btn secondary sm" onclick="showView(\'companies\')">Back</button></div><div style="color:var(--err)">Error: ' + esc(String(e)) + '</div>';
+  }
+}
+async function enrichCompanyDomain(domain) {
+  try {
+    const r = await api('/api/enrich-domains', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ limit: 1, only_missing: false }) });
+    toast('Enriched: ' + (r.details && r.details[0] ? r.details[0].title : domain), 'ok');
+    // reload not needed; domain info already fetched
+  } catch (e) { toast('Enrich failed: ' + e, 'err'); }
 }
 
 async function addToCrm(b, btn) {
