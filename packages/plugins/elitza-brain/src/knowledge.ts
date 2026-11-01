@@ -229,6 +229,18 @@ export function ensureKnowledge(): string[] {
     fs.writeFileSync(target, content)
     written.push(target)
   }
+  // Also seed any bundled playbook files shipped with the plugin.
+  const bundledDir = path.join(import.meta.dir, "..", "playbooks")
+  if (fs.existsSync(bundledDir)) {
+    for (const file of fs.readdirSync(bundledDir)) {
+      if (!file.endsWith(".md")) continue
+      const target = path.join(PLAYBOOK_DIR, file)
+      if (fs.existsSync(target)) continue
+      const content = fs.readFileSync(path.join(bundledDir, file), "utf8")
+      fs.writeFileSync(target, content)
+      written.push(target)
+    }
+  }
   return written
 }
 
