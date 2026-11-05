@@ -22,7 +22,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { BRAIN_DIR, ELITZA_HOME, nowISO } from "./db.js"
-import { addAsset, getClient, listAssets, logInteraction, type Client } from "./crm.js"
+import { addAsset, getClient, listAssets, logInteraction, firstConfiguredStage, type Client } from "./crm.js"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const BUNDLED_WORKSHEETS_DIR = path.join(HERE, "..", "worksheets")
@@ -118,7 +118,8 @@ export function scoreWorksheet(client: Client, w: Worksheet): number {
   // document/ocr boost
   if (/(document|ocr|pdf|contract|fascicol)/i.test(blob) && (w.tags.includes("documents") || w.tags.includes("ocr"))) score += 4
   // audit/diagnosis boost for early stages
-  if ((client.status === "scouted" || client.status === "diagnose") && w.tags.includes("audit")) score += 3
+  const firstStage = firstConfiguredStage()
+  if ((client.status === firstStage || client.status === "scouted" || client.status === "diagnose") && w.tags.includes("audit")) score += 3
   return score
 }
 

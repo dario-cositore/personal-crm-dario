@@ -65,6 +65,30 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+// Guardrail: refuse to share internal instructions/details or tool inventories.
+function guardrailReply(text: string): string | null {
+  const t = (text || "").toLowerCase()
+  if (!t.trim()) return null
+  const sensitive = [
+    "instruction", "system prompt", "your prompt", "prompting", "guardrail", "contract",
+    "background", "persona", "soul", "internal", "how are you built", "how were you made",
+    "your code", "source code", "training", "what are you", "who are you", "tell me about yourself",
+    "reveal", "show me your", "share your",
+  ]
+  if (sensitive.some((k) => t.includes(k))) {
+    return "I can't share that. I'm Elitza, an AI Enablement operator — I handle scouting, CRM, outreach, enrichment, and delivery. How can I help with your clients?"
+  }
+  const cap = [
+    "what can you do", "what do you do", "your capabilities", "your tools", "what tools",
+    "list your tools", "what are your tools", "your api", "what api", "what features",
+    "what functions", "what commands", "help me", "how do you work", "what do you know",
+  ]
+  if (cap.some((k) => t.includes(k))) {
+    return "I'm Elitza, an AI Enablement operator. I help you scout local clients, qualify them in a CRM, enrich leads, run outreach cadence, and deliver implementation sprints. I don't share my internal tooling or implementation details. What would you like to do with your clients?"
+  }
+  return null
+}
+
 async function readBody(req: Request): Promise<any> {
   try { return await req.json() } catch { return {} }
 }
@@ -116,6 +140,8 @@ async function proxyChatToEngine(text: string): Promise<string> {
 
 
 async function directChat(text: string, provider?: "mimo" | "opencode-go", modelOverride?: string, variantOverride?: string): Promise<{ thinking: string; reply: string }> {
+  const refusal = guardrailReply(text)
+  if (refusal) return { thinking: "", reply: refusal }
   // Read provider/model from soul if not explicitly passed.
   if (!provider) {
     try {
@@ -166,11 +192,11 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       if (variantOverride) variant = variantOverride
     } catch {}
   } else {
-    // Read the opencode console credential from the opencode.db if no API key is set.
+    // Resolve the OpenCode Go plan credential from Elitza's own store (never from another OpenCode).
     if (!apiKey) {
       try {
         const Database = (await import("bun:sqlite")).default
-        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
         const db = new Database(dbPath, { readonly: true })
         const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
         if (row?.value) {
@@ -180,7 +206,6 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
         db.close()
       } catch { /* ignore */ }
     }
-    apiKey = apiKey || process.env.OPENCODE_API_KEY || ""
     baseUrl = "https://opencode.ai/inference/go/openai/v1"
     model = modelOverride || "beam-free"
     try {
@@ -192,7 +217,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       if (variantOverride) variant = variantOverride
     } catch {}
   }
-  if (!apiKey) return { thinking: "", reply: "No API key configured for " + provider + ". Run `elitza` setup first." }
+  if (!apiKey) return { thinking: "", reply: "Not connected to OpenCode Go. Open CRM Settings → OpenCode Go plan → Connect / Reconnect." }
   // Expose ALL brain tools to the model so Elitza can touch every aspect of the CRM.
   const brainTools = makeBrainTools({ generate: { text: async (input: { prompt: string }) => ({ data: { text: "" } }) } })
   const tools = brainTools.map((t) => ({
@@ -210,14 +235,15 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   }
 
   const messages: any[] = []
-  if (soul) messages.push({ role: "system", content: soul + "\n\nYou have access to CRM tools. Use them to act on the user's requests. Confirm actions taken. For greetings or small talk, reply directly without calling tools." })
+  const ctxNote = "\\n\\nSource rule: 'internal client' = a client stored in the CRM (use crm search/get). 'External' = scout results or web research not yet in the CRM. When asked about an internal client, search the CRM first and return the stored record."
+  if (soul) messages.push({ role: "system", content: soul + "\\n\\nYou have access to CRM tools. Use them to act on the user's requests. Confirm actions taken. For greetings or small talk, reply directly without calling tools." + ctxNote })
   messages.push({ role: "user", content: text })
 
   let thinking = ""
   // tool-calling loop (omit tools on final pass so the model must answer in text)
   for (let iter = 0; iter < 4; iter++) {
     const isLast = iter === 3
-    const body: any = { model: model, messages, stream: false }
+    const body: any = { model: model, messages, stream: false, max_tokens: 2000 }
     if (variant) body.reasoning_effort = variant
     if (!isLast) body.tools = tools
     const fetchHeaders: Record<string, string> = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey }
@@ -225,9 +251,9 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       // Read org ID from the opencode console credential.
       try {
         const Database = (await import("bun:sqlite")).default
-        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
         const db = new Database(dbPath, { readonly: true })
-        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%'").get() as any
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
         if (row?.value) {
           const cred = JSON.parse(row.value)
           if (cred.metadata?.orgID) fetchHeaders["x-opencode-org-id"] = cred.metadata.orgID
@@ -250,7 +276,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
     messages.push(msg)
     const toolCalls = msg.tool_calls
     if (!toolCalls || !toolCalls.length) {
-      return { thinking, reply: msg.content || "(no response)" }
+      return { thinking, reply: msg.content || msg.reasoning_content || "(no response)" }
     }
     for (const tc of toolCalls) {
       thinking += (thinking ? "\n" : "") + "→ calling " + tc.function.name + "(" + (tc.function.arguments || "") + ")"
@@ -279,7 +305,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
 
         // WebSocket upgrade for Ask Elitza chat
         if (path === "/ws/chat") {
-          const upgraded = server.upgrade(req, { data: {} })
+          const wsUrl = new URL(req.url)
+          const sid = wsUrl.searchParams.get("session")
+          const upgraded = server.upgrade(req, { data: { sessionId: sid ? Number(sid) : null } })
           if (upgraded) return undefined as any
           return new Response("WebSocket upgrade failed", { status: 400 })
         }
@@ -407,13 +435,13 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (provider === "mimo") {
             return json({ provider, models: ["mimo-v2.6-flash"] })
           }
-          // Fetch opencode-go models from console.
-          let models: string[] = ["beam-free", "claude-haiku-5-5", "deepseek-v4-pro", "deepseek-v4.1-flash", "gemini-4-argon", "glm-5.2", "glm-5.3", "glm-5.3-flash", "gpt-5.6-luna", "gpt-6-luna", "grok-4.7", "hy3", "hy4", "hy4-preview", "iceman-contributor-free", "kimi-k2.7-code", "kimi-k3", "kimi-k3.1-pro", "longcat-2.0", "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.6-flash", "mimo-v2.6-pro", "minimax-m3", "minimax-m3.1-flash", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor", "qwen3.7-plus", "qwen3.8-flash", "qwen3.8-max", "step-5-preview"]
+          // Pull ALL models available for the OpenCode Go plan from the console.
+          let models: string[] = []
           try {
             const Database = (await import("bun:sqlite")).default
-            const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
             const db = new Database(dbPath, { readonly: true })
-            const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%'").get() as any
+            const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
             db.close()
             if (row?.value) {
               const cred = JSON.parse(row.value)
@@ -427,11 +455,313 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
               console.error("[models] console returned", m.length, "models")
               if (m.length > 0) models = m
             } else {
-              console.error("[models] no credential row found")
+              console.error("[models] no console credential found — connect OpenCode Go")
             }
+          if (models.length === 0) models = ["beam-free"]
           } catch (e) { console.error("[models] error:", String(e)) }
           return json({ provider, models })
         }
+        // --- OpenCode Go plan connection (console device flow) ---
+        if (path === "/api/settings/opencode-status" && req.method === "GET") {
+          try {
+            const fs = await import("node:fs")
+            const pathm = await import("node:path")
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+            if (!fs.existsSync(dbPath)) return json({ connected: false })
+            const Database = (await import("bun:sqlite")).default
+            const db = new Database(dbPath, { readonly: true })
+            const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
+            db.close()
+            if (row?.value) {
+              const cred = JSON.parse(row.value)
+              return json({ connected: true, email: cred.metadata?.email ?? null, org: cred.metadata?.orgName ?? null, orgID: cred.metadata?.orgID ?? null, accountID: cred.metadata?.accountID ?? null })
+            }
+            return json({ connected: false })
+          } catch (e) { return json({ connected: false }) }
+        }
+        if (path === "/api/settings/opencode-connect" && req.method === "POST") {
+          try {
+            const server = "https://opencode.ai/console"
+            const res = await fetch(server + "/auth/device/code", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ client_id: "opencode-cli", supports_org_scope: true }),
+            })
+            const data = await res.json() as any
+            if (!data.device_code) return json({ error: data.error || "Failed to start device flow" }, 500)
+            const verification = new URL(data.verification_uri_complete, server + "/")
+            return json({ device_code: data.device_code, user_code: data.user_code, verification_url: verification.href, interval: data.interval || 5 })
+          } catch (e) { return json({ error: String(e) }, 500) }
+        }
+        if (path === "/api/settings/opencode-poll" && req.method === "POST") {
+          const body = await readBody(req)
+          const deviceCode = String(body.device_code ?? "")
+          if (!deviceCode) return json({ error: "device_code required" }, 400)
+          const server = "https://opencode.ai/console"
+          try {
+            const res = await fetch(server + "/auth/device/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: deviceCode, client_id: "opencode-cli" }),
+            })
+            const data = await res.json() as any
+            if (data.error === "authorization_pending") return json({ pending: true })
+            if (data.error === "slow_down") return json({ pending: true, slow_down: true })
+            if (data.error) return json({ error: data.error_description || data.error }, 400)
+            if (!data.access_token) return json({ error: "No access token returned" }, 500)
+            // Fetch user + orgs to build metadata.
+            const userRes = await fetch(server + "/api/user", { headers: { "Authorization": "Bearer " + data.access_token } })
+            const user = await userRes.json() as any
+            const orgsRes = await fetch(server + "/api/orgs", { headers: { "Authorization": "Bearer " + data.access_token } })
+            const orgs = await orgsRes.json() as any[]
+            const org = (Array.isArray(orgs) && orgs.length) ? orgs[0] : null
+            const credValue = JSON.stringify({
+              type: "oauth",
+              methodID: "device",
+              access: data.access_token,
+              refresh: data.refresh_token,
+              expires: Date.now() + (data.expires_in || 3600) * 1000,
+              metadata: { server, accountID: user.id, email: user.email, orgID: org?.id, orgName: org?.name },
+            })
+            // Store in the credential table (upsert: remove old opencode creds first).
+            const fs = await import("node:fs")
+            const pathm = await import("node:path")
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+            fs.mkdirSync(pathm.dirname(dbPath), { recursive: true })
+            const Database = (await import("bun:sqlite")).default
+            const db = new Database(dbPath)
+            db.run(`CREATE TABLE IF NOT EXISTS credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL)`)
+            const now = Date.now()
+            db.run("DELETE FROM credential WHERE integration_id = 'opencode'", [])
+            const id = "cred_" + Math.random().toString(36).slice(2) + Date.now().toString(36)
+            db.run("INSERT INTO credential (id, integration_id, label, value, connector_id, method_id, active, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              [id, "opencode", "OpenCode Console", credValue, null, "device", 1, now, now])
+            db.close()
+            return json({ ok: true, email: user.email, org: org?.name ?? null })
+          } catch (e) { return json({ error: String(e) }, 500) }
+        }
+        // --- Skills management (Elitza skills = ~/.elitza/skills/<name>/SKILL.md) ---
+        const skillsRoot = (process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")) + "/skills"
+        const skillsManifestPath = (process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")) + "/skills-manifest.json"
+        function loadSkillsManifest(): Record<string, { enabled: boolean }> {
+          try {
+            const fs = require("node:fs")
+            if (!fs.existsSync(skillsManifestPath)) return {}
+            return JSON.parse(fs.readFileSync(skillsManifestPath, "utf8")) || {}
+          } catch { return {} }
+        }
+        function saveSkillsManifest(m: Record<string, { enabled: boolean }>) {
+          const fs = require("node:fs")
+          const pathm = require("node:path")
+          fs.mkdirSync(pathm.dirname(skillsManifestPath), { recursive: true })
+          fs.writeFileSync(skillsManifestPath, JSON.stringify(m, null, 2), { mode: 0o600 })
+        }
+        function parseSkillFrontmatter(content: string): { name: string; description: string } {
+          const m = content.match(/^---\n([\s\S]*?)\n---/)
+          const fm = m ? m[1] : ""
+          const get = (k: string) => {
+            const mm = fm.match(new RegExp(`^${k}:\\s*(.*)$`, "m"))
+            return mm ? mm[1].trim().replace(/^['"]|['"]$/g, "") : ""
+          }
+          return { name: get("name"), description: get("description") }
+        }
+        if (path === "/api/settings/skills" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathm = await import("node:path")
+          fs.mkdirSync(skillsRoot, { recursive: true })
+          const manifest = loadSkillsManifest()
+          const entries = fs.readdirSync(skillsRoot, { withFileTypes: true })
+          const skills: any[] = []
+          for (const e of entries) {
+            if (!e.isDirectory()) continue
+            const file = pathm.join(skillsRoot, e.name, "SKILL.md")
+            if (!fs.existsSync(file)) continue
+            const content = fs.readFileSync(file, "utf8")
+            const fm = parseSkillFrontmatter(content)
+            const enabled = manifest[e.name]?.enabled !== false
+            skills.push({ name: fm.name || e.name, dir: e.name, description: fm.description, enabled, size: content.length })
+          }
+          return json({ skills })
+        }
+        const skillMatch = path.match(/^\/api\/settings\/skills\/([^/]+)$/)
+        if (skillMatch && req.method === "GET") {
+          const dir = decodeURIComponent(skillMatch[1])
+          const fs = await import("node:fs")
+          const pathm = await import("node:path")
+          const file = pathm.join(skillsRoot, dir, "SKILL.md")
+          if (!fs.existsSync(file)) return json({ error: "not found" }, 404)
+          const content = fs.readFileSync(file, "utf8")
+          const fm = parseSkillFrontmatter(content)
+          const manifest = loadSkillsManifest()
+          const enabled = manifest[dir]?.enabled !== false
+          return json({ dir, name: fm.name || dir, description: fm.description, enabled, content })
+        }
+        if (path === "/api/settings/skills" && req.method === "POST") {
+          const body = await readBody(req)
+          const dir = String(body.dir || body.name || "").trim().replace(/[^a-zA-Z0-9._-]/g, "-")
+          if (!dir) return json({ error: "name required" }, 400)
+          const content = String(body.content ?? "")
+          if (!content.trim()) return json({ error: "content required" }, 400)
+          const fs = await import("node:fs")
+          const pathm = await import("node:path")
+          const skillDir = pathm.join(skillsRoot, dir)
+          fs.mkdirSync(skillDir, { recursive: true })
+          fs.writeFileSync(pathm.join(skillDir, "SKILL.md"), content, { mode: 0o644 })
+          const manifest = loadSkillsManifest()
+          manifest[dir] = { enabled: body.enabled !== false }
+          saveSkillsManifest(manifest)
+          return json({ ok: true, dir })
+        }
+        if (skillMatch && req.method === "PUT") {
+          const dir = decodeURIComponent(skillMatch[1])
+          const body = await readBody(req)
+          const content = String(body.content ?? "")
+          if (!content.trim()) return json({ error: "content required" }, 400)
+          const fs = await import("node:fs")
+          const pathm = await import("node:path")
+          const file = pathm.join(skillsRoot, dir, "SKILL.md")
+          if (!fs.existsSync(file)) return json({ error: "not found" }, 404)
+          fs.writeFileSync(file, content, { mode: 0o644 })
+          return json({ ok: true, dir })
+        }
+        if (skillMatch && path.endsWith("/toggle") && req.method === "POST") {
+          // handled below via separate route check; placeholder
+        }
+        const skillToggleMatch = path.match(/^\/api\/settings\/skills\/([^/]+)\/toggle$/)
+        if (skillToggleMatch && req.method === "POST") {
+          const dir = decodeURIComponent(skillToggleMatch[1])
+          const body = await readBody(req)
+          const manifest = loadSkillsManifest()
+          manifest[dir] = { enabled: body.enabled !== false }
+          saveSkillsManifest(manifest)
+          return json({ ok: true, dir, enabled: manifest[dir].enabled })
+        }
+        if (skillMatch && req.method === "DELETE") {
+          const dir = decodeURIComponent(skillMatch[1])
+          const fs = await import("node:fs")
+          const pathm = await import("node:path")
+          const skillDir = pathm.join(skillsRoot, dir)
+          try { fs.rmSync(skillDir, { recursive: true, force: true }) } catch {}
+          const manifest = loadSkillsManifest()
+          delete manifest[dir]
+          saveSkillsManifest(manifest)
+          return json({ ok: true, dir })
+        }
+
+        // --- MCP server management (engine config: mcp.servers) ---
+        function engineConfigPath(): string {
+          const dir = process.env.OPENCODE_CONFIG_DIR ?? (process.env.XDG_CONFIG_HOME ?? ((process.env.HOME || "") + "/.config")) + "/opencode"
+          return dir + "/opencode.json"
+        }
+        function loadEngineConfig(): any {
+          const fs = require("node:fs")
+          const p = engineConfigPath()
+          if (!fs.existsSync(p)) return {}
+          try { return JSON.parse(fs.readFileSync(p, "utf8")) } catch { return {} }
+        }
+        function saveEngineConfig(cfg: any) {
+          const fs = require("node:fs")
+          const pathm = require("node:path")
+          const p = engineConfigPath()
+          fs.mkdirSync(pathm.dirname(p), { recursive: true })
+          fs.writeFileSync(p, JSON.stringify(cfg, null, 2), { mode: 0o600 })
+        }
+        if (path === "/api/settings/mcp" && req.method === "GET") {
+          const cfg = loadEngineConfig()
+          const servers = cfg.mcp?.servers ?? {}
+          const list = Object.entries(servers).map(([name, c]) => ({ name, config: c }))
+          return json({ servers: list })
+        }
+        const mcpMatch = path.match(/^\/api\/settings\/mcp\/([^/]+)$/)
+        if (mcpMatch && req.method === "POST" && false) { /* placeholder */ }
+        if (path === "/api/settings/mcp" && req.method === "POST") {
+          const body = await readBody(req)
+          const name = String(body.name || "").trim()
+          if (!name) return json({ error: "name required" }, 400)
+          const cfg = loadEngineConfig()
+          if (!cfg.mcp) cfg.mcp = {}
+          if (!cfg.mcp.servers) cfg.mcp.servers = {}
+          cfg.mcp.servers[name] = body.config ?? {}
+          saveEngineConfig(cfg)
+          return json({ ok: true, name })
+        }
+        if (mcpMatch && req.method === "PUT") {
+          const name = decodeURIComponent(mcpMatch[1])
+          const body = await readBody(req)
+          const cfg = loadEngineConfig()
+          if (!cfg.mcp?.servers?.[name]) return json({ error: "not found" }, 404)
+          cfg.mcp.servers[name] = body.config ?? cfg.mcp.servers[name]
+          saveEngineConfig(cfg)
+          return json({ ok: true, name })
+        }
+        if (mcpMatch && req.method === "DELETE") {
+          const name = decodeURIComponent(mcpMatch[1])
+          const cfg = loadEngineConfig()
+          if (cfg.mcp?.servers?.[name]) {
+            delete cfg.mcp.servers[name]
+            saveEngineConfig(cfg)
+          }
+          return json({ ok: true, name })
+        }
+
+        // --- Chat history (Ask Elitza) ---
+        function ensureChatTables() {
+          const db = crmDb()
+          db.run(`CREATE TABLE IF NOT EXISTS chat_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+          db.run(`CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`)
+        }
+        if (path === "/api/chat/sessions" && req.method === "GET") {
+          ensureChatTables()
+          const rows = crmDb().query("SELECT id, title, created_at, updated_at FROM chat_sessions ORDER BY updated_at DESC").all() as any[]
+          return json({ sessions: rows })
+        }
+        if (path === "/api/chat/sessions" && req.method === "POST") {
+          ensureChatTables()
+          const body = await readBody(req)
+          const title = String(body.title ?? "New chat").slice(0, 80)
+          const now = new Date().toISOString()
+          const r = crmDb().run("INSERT INTO chat_sessions (title, created_at, updated_at) VALUES (?, ?, ?)", [title, now, now])
+          const id = Number(r.lastInsertRowid)
+          return json({ id, title, created_at: now, updated_at: now })
+        }
+        const chatSessionMatch = path.match(/^\/api\/chat\/sessions\/(\d+)$/)
+        if (chatSessionMatch && req.method === "GET") {
+          ensureChatTables()
+          const id = Number(chatSessionMatch[1])
+          const s = crmDb().query("SELECT id, title, created_at, updated_at FROM chat_sessions WHERE id = ?").get(id) as any
+          if (!s) return json({ error: "not found" }, 404)
+          const messages = crmDb().query("SELECT id, role, text, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC").all(id) as any[]
+          return json({ session: s, messages })
+        }
+        if (chatSessionMatch && req.method === "PUT") {
+          ensureChatTables()
+          const id = Number(chatSessionMatch[1])
+          const body = await readBody(req)
+          const title = String(body.title ?? "").slice(0, 80)
+          if (title) crmDb().run("UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?", [title, new Date().toISOString(), id])
+          return json({ ok: true, id })
+        }
+        if (chatSessionMatch && req.method === "DELETE") {
+          ensureChatTables()
+          const id = Number(chatSessionMatch[1])
+          crmDb().run("DELETE FROM chat_messages WHERE session_id = ?", [id])
+          crmDb().run("DELETE FROM chat_sessions WHERE id = ?", [id])
+          return json({ ok: true, id })
+        }
+        const chatMsgMatch = path.match(/^\/api\/chat\/sessions\/(\d+)\/messages$/)
+        if (chatMsgMatch && req.method === "POST") {
+          ensureChatTables()
+          const id = Number(chatMsgMatch[1])
+          const body = await readBody(req)
+          const role = String(body.role ?? "user")
+          const text = String(body.text ?? "")
+          if (!text.trim()) return json({ error: "text required" }, 400)
+          const now = new Date().toISOString()
+          const r = crmDb().run("INSERT INTO chat_messages (session_id, role, text, created_at) VALUES (?, ?, ?, ?)", [id, role, text, now])
+          crmDb().run("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", [now, id])
+          return json({ id: Number(r.lastInsertRowid), role, text, created_at: now })
+        }
+
         if (path === "/api/settings/backup" && req.method === "POST") {
           const { execSync } = await import("node:child_process")
           const os = await import("node:os")
@@ -679,6 +1009,15 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           }
           const client = updateClient(id, patch)
           return json({ client })
+        }
+        if (path === "/api/clients/delete" && req.method === "POST") {
+          const body = await readBody(req)
+          const id = Number(body.id)
+          if (!Number.isFinite(id) || id <= 0) return json({ error: "invalid id" }, 400)
+          const { deleteClient } = await import("./crm.js")
+          const ok = deleteClient(id)
+          if (!ok) return json({ error: "not found" }, 404)
+          return json({ ok: true, id })
         }
         if (path === "/api/drafts" && req.method === "GET") {
           const rows = listPipeline({ limit: 200 }).filter((r) => r.draft_path)
@@ -1036,7 +1375,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 const created = await ctx.session.create({ title: "CRM chat" })
                 chatSessionId = created.id
               }
-              await ctx.session.prompt({ sessionID: chatSessionId, text: text } as any)
+              const page = body.page ? String(body.page) : null
+              const pageCtx = page ? `\\n\\n[Context: user is currently on the "${page}" page of the CRM.]` : ""
+              await ctx.session.prompt({ sessionID: chatSessionId, text: text + pageCtx } as any)
               await new Promise((r) => setTimeout(r, 3000))
               const msgs = await ctx.session.context({ sessionID: chatSessionId })
               for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1075,14 +1416,44 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
       },
       websocket: {
         async message(ws, message) {
-          const text = String(message)
+          const raw = String(message)
+          let text = raw
+          let page: string | null = null
+          try {
+            const j = JSON.parse(raw)
+            if (j && typeof j.text === "string") { text = j.text; page = j.page || null }
+          } catch { /* plain text */ }
+          if (page) (ws.data as any).page = page
+          const refusal = guardrailReply(text)
+          // Ensure a CRM chat session exists and persist the user message.
+          try {
+            const db = crmDb()
+            db.run(`CREATE TABLE IF NOT EXISTS chat_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+            db.run(`CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`)
+            if (!(ws.data as any).sessionId) {
+              const now = new Date().toISOString()
+              crmDb().run("INSERT INTO chat_sessions (title, created_at, updated_at) VALUES (?, ?, ?)", [text.slice(0, 40) || "New chat", now, now])
+              const lastRow = crmDb().query("SELECT id FROM chat_sessions ORDER BY id DESC LIMIT 1").get() as any
+              (ws.data as any).sessionId = Number(lastRow?.id)
+              ws.send(JSON.stringify({ type: "session", id: (ws.data as any).sessionId }))
+            }
+            const now = new Date().toISOString()
+            crmDb().run("INSERT INTO chat_messages (session_id, role, text, created_at) VALUES (?, ?, ?, ?)", [(ws.data as any).sessionId, "user", text, now])
+            crmDb().run("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", [now, (ws.data as any).sessionId])
+          } catch { /* best effort */ }
+          if (refusal) {
+            try { const now = new Date().toISOString(); crmDb().run("INSERT INTO chat_messages (session_id, role, text, created_at) VALUES (?, ?, ?, ?)", [(ws.data as any).sessionId, "assistant", refusal, now]) } catch {}
+            ws.send(JSON.stringify({ type: "reply", text: refusal }))
+            return
+          }
           try {
             if (ctx) {
               if (!chatSessionId) {
                 const created = await ctx.session.create({ title: "CRM chat" })
                 chatSessionId = created.id
               }
-              await ctx.session.prompt({ sessionID: chatSessionId, text: text } as any)
+              const pageCtx = (ws.data as any).page ? `\\n\\n[Context: user is currently on the "${(ws.data as any).page}" page of the CRM.]` : ""
+              await ctx.session.prompt({ sessionID: chatSessionId, text: text + pageCtx } as any)
               await new Promise((r) => setTimeout(r, 2000))
               const msgs = await ctx.session.context({ sessionID: chatSessionId })
               let reply = ""
@@ -1092,6 +1463,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 reply = (m.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
                 break
               }
+              try { if ((ws.data as any).sessionId) { const now = new Date().toISOString(); crmDb().run("INSERT INTO chat_messages (session_id, role, text, created_at) VALUES (?, ?, ?, ?)", [(ws.data as any).sessionId, "assistant", reply || "(no response)", now]); crmDb().run("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", [now, (ws.data as any).sessionId]) } } catch {}
               ws.send(JSON.stringify({ type: "reply", text: reply || "(no response)" }))
               return
             }
@@ -1102,7 +1474,8 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             if (!reply || reply === "(no response)") {
               try {
                 const provider = (process.env.ELITZA_CHAT_PROVIDER || "opencode-go") as "mimo" | "opencode-go"
-                const r = await directChat(text, provider)
+                const pageCtx = (ws.data as any).page ? `\\n\\n[Context: user is currently on the "${(ws.data as any).page}" page of the CRM.]` : ""
+                const r = await directChat(text + pageCtx, provider)
                 reply = r.reply
                 thinking = r.thinking
               } catch (e) { reply = "Error: " + String(e) }
@@ -1110,6 +1483,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             if (thinking) ws.send(JSON.stringify({ type: "thinking", text: thinking }))
             ws.send(JSON.stringify({ type: "reply", text: reply || "(no response)" }))
           } catch (e) {
+            try { if ((ws.data as any).sessionId) { const now = new Date().toISOString(); crmDb().run("INSERT INTO chat_messages (session_id, role, text, created_at) VALUES (?, ?, ?, ?)", [(ws.data as any).sessionId, "assistant", "Error: " + String(e), now]) } } catch {}
             ws.send(JSON.stringify({ type: "error", text: String(e) }))
           }
         },
