@@ -1973,17 +1973,8 @@ async function runScout() {
   btn.disabled = true;
   btn.innerHTML = '<span class="scout-pulse"></span> Scouting…';
 
-  const stages = [
-    '🔍 Initializing scout engine…',
-    '📡 Querying Overpass (OpenStreetMap) for "' + q + '" in ' + loc + '…',
-    '🗺️  Photon geocoding fallback ready…',
-    '🧹 Deduplicating by name + address…',
-    '✨ Enriching contact details…',
-  ];
-  for (const s of stages) {
-    scoutLog(s, 'info');
-    await scoutSleep(450);
-  }
+  const t0 = Date.now();
+  scoutLog('🔍 Scouting "' + q + '" in ' + loc + ' (limit ' + n + ')…', 'info');
 
   let res;
   try { res = await api('/api/scout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ location: loc, query: q, limit: n }) }); }
@@ -1993,17 +1984,28 @@ async function runScout() {
     btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg> Scout';
     return;
   }
+  // Show real steps from the backend.
+  if (res.steps && res.steps.length) {
+    for (const step of res.steps) {
+      const level = step.startsWith('❌') ? 'err' : step.startsWith('⚠️') ? 'warn' : step.startsWith('✅') ? 'ok' : 'info';
+      scoutLog(step, level);
+    }
+  }
   if (res.error) {
     scoutLog('❌ Error: ' + res.error, 'err');
     status.className = 'scout-status show err'; status.textContent = 'Error: ' + res.error;
     btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg> Scout';
     return;
   }
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const sources = (res.meta && res.meta.sources_used) || [];
-  scoutLog('✅ Found ' + res.businesses.length + ' result(s) via ' + (sources.join(', ') || 'unknown'), 'ok');
+  scoutLog('✅ Found ' + res.businesses.length + ' result(s) in ' + elapsed + 's via ' + (sources.join(', ') || 'unknown'), 'ok');
+  const withPhone = (res.businesses || []).filter(b => b.phone).length;
+  const withEmail = (res.businesses || []).filter(b => b.email).length;
+  const withWeb = (res.businesses || []).filter(b => b.website).length;
+  scoutLog('📊 ' + withPhone + ' with phone, ' + withEmail + ' with email, ' + withWeb + ' with website', 'info');
   if (res.businesses.length) {
     scoutLog('📦 Rendering ' + res.businesses.length + ' business card(s)…', 'info');
-    await scoutSleep(300);
   }
 
   cards.innerHTML = '';

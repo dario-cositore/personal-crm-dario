@@ -104,6 +104,7 @@ export interface ScoutedBusiness {
 export interface ScoutResult {
   businesses: ScoutedBusiness[]
   meta: { sources_used: string[] }
+  steps?: string[]
   error?: string
   run_id?: number
 }
@@ -186,6 +187,7 @@ export async function scoutBusinesses(
     return {
       businesses: [],
       meta: { sources_used: [] },
+      steps: ["❌ No OSM mapping for query: " + query],
       error: `no OpenStreetMap mapping for "${query}" (known: idraulici, parrucchieri, dentisti, avvocati, commercialisti, ristoranti, bar, autofficine, farmacie)`,
     }
   }
@@ -201,44 +203,59 @@ export async function scoutBusinesses(
 
   const candidates: Candidate[] = []
   const failures: string[] = []
+  const steps: string[] = []
   const tagSet = new Set(tags.map(([k, v]) => `${k}=${v}`))
 
   // 1. Photon (primary, stable)
+  steps.push("🔍 Querying Photon (Komoot/OSM) for " + query + " in " + location + "…")
   let photonAnswered = false
   try {
     const photon = await scoutPhoton(location, tags, tagSet, size)
-    if (photon.error) failures.push(photon.error)
+    if (photon.error) { failures.push(photon.error); steps.push("⚠️ Photon: " + photon.error) }
     else {
       photonAnswered = true
       candidates.push(...photon.candidates)
+      steps.push("✅ Photon returned " + photon.candidates.length + " candidate(s)")
     }
   } catch (error) {
     failures.push(`Photon search failed: ${String(error)}`)
+    steps.push("❌ Photon failed: " + String(error))
   }
 
   // 2. Overpass fallback when Photon is short or failed.
   if (mergeDedup(candidates).length < size) {
+    steps.push("📡 Photon short (" + mergeDedup(candidates).length + "/" + size + ") — trying Overpass fallback…")
     const osm = await scoutOsm(location, tags)
-    if (osm.error) failures.push(osm.error)
-    candidates.push(...osm.businesses.map((business) => ({ business, source: "osm" })))
+    if (osm.error) { failures.push(osm.error); steps.push("⚠️ Overpass: " + osm.error) }
+    else {
+      candidates.push(...osm.businesses.map((business) => ({ business, source: "osm" })))
+      steps.push("✅ Overpass returned " + osm.businesses.length + " candidate(s)")
+    }
+  } else {
+    steps.push("✅ Photon sufficient — skipping Overpass")
   }
 
   // 3. Google Places fallback when still short and a key is present
   const googleKey = process.env.GOOGLE_MAPS_API_KEY?.trim()
   if (googleKey && mergeDedup(candidates).length < size) {
+    steps.push("🗺️  Still short — trying Google Places…")
     const google = await googleSearch(location, query, googleKey, size)
-    if (google.error) failures.push(google.error)
-    candidates.push(...google.businesses.map((business) => ({ business, source: "google_places" })))
+    if (google.error) { failures.push(google.error); steps.push("⚠️ Google Places: " + google.error) }
+    else {
+      candidates.push(...google.businesses.map((business) => ({ business, source: "google_places" })))
+      steps.push("✅ Google Places returned " + google.businesses.length + " candidate(s)")
+    }
   }
 
   const merged = mergeDedup(candidates).slice(0, size)
   let result: ScoutResult
   if (!merged.length && failures.length) {
-    result = { businesses: [], meta: { sources_used: [] }, error: failures.join("; ") }
+    result = { businesses: [], meta: { sources_used: [] }, steps, error: failures.join("; ") }
   } else {
     result = {
       businesses: merged.map((entry) => entry.business),
       meta: { sources_used: [...new Set(merged.flatMap((entry) => entry.sources))] },
+      steps,
     }
   }
   if (!isTestEnv) cache.set(key, { value: result, expires: Date.now() + CACHE_TTL_MS })
