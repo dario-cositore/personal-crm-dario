@@ -253,9 +253,19 @@
     padding-bottom: 12px;
     min-height: 500px;
     align-items: flex-start;
+    cursor: grab;
+    user-select: none;
+    scroll-behavior: auto;
   }
-  .column.drag-over { outline: 2px dashed var(--accent); background: var(--bg-hover); }
-  .kanban-card.dragging { opacity: 0.5; }
+  .board.panning { cursor: grabbing; }
+  /* .column.drag-over removed — only the dragged card is highlighted */
+  .kanban-card.dragging, .kanban-card.holding {
+    opacity: 0.9;
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+    transform: scale(1.02);
+    transition: border-color 0.1s, box-shadow 0.1s, transform 0.1s;
+  }
   .column {
     min-width: 248px; width: 248px;
     background: var(--bg-panel);
@@ -750,9 +760,10 @@
         </div>
       </div>
       <div id="board" class="view active">
-        <div class="page-header">
-          <h1>Pipeline</h1>
-          <p>Every client, by stage. Drag a card to move it. Click to open details.</p>
+        <div class="page-header" style="display:flex;align-items:center;gap:10px">
+          <h1 style="margin:0">Pipeline</h1>
+          <button class="btn ghost sm" onclick="openStageEditor()" title="Edit pipeline stages" style="padding:4px 8px;font-size:13px">✏️</button>
+          <p style="margin:0;color:var(--text-muted);font-size:13px">Every client, by stage. Drag a card to move it. Click to open details.</p>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
           <label style="color:var(--text-muted);font-size:13px">Per page:</label>
@@ -1016,10 +1027,94 @@
 </div>
 
 <script>
-const STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
-const STATUS_LABEL = {scouted:"Scouted",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
-const STATUS_COLOR = {scouted:"muted",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
-const COLUMN_COLOR = {scouted:"#62666d",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#7170ff",proposal:"#7170ff",workbook:"#7170ff",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
+let STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
+let STATUS_LABEL = {scouted:"Scouted",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
+let STATUS_COLOR = {scouted:"muted",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
+let COLUMN_COLOR = {scouted:"#62666d",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#7170ff",proposal:"#7170ff",workbook:"#7170ff",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
+
+async function loadPipelineStages() {
+  try {
+    const res = await api('/api/pipeline/stages');
+    const stages = res.stages || [];
+    if (stages.length > 0) {
+      STATUSES = stages.map(s => s.id);
+      STATUS_LABEL = {};
+      STATUS_COLOR = {};
+      COLUMN_COLOR = {};
+      for (const s of stages) {
+        STATUS_LABEL[s.id] = s.label;
+        STATUS_COLOR[s.id] = s.statusColor || 'muted';
+        COLUMN_COLOR[s.id] = s.color || '#62666d';
+      }
+    }
+  } catch (e) { /* use defaults */ }
+}
+
+async function savePipelineStages(stages) {
+  await api('/api/pipeline/stages', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ stages }) });
+  await loadPipelineStages();
+}
+
+let stageEditorStages = [];
+
+function openStageEditor() {
+  stageEditorStages = STATUSES.map(id => ({ id, label: STATUS_LABEL[id] || id, color: COLUMN_COLOR[id] || '#62666d', statusColor: STATUS_COLOR[id] || 'muted' }));
+  renderStageEditorList();
+  document.getElementById('stageEditorOverlay').classList.add('open');
+}
+
+function closeStageEditor() {
+  document.getElementById('stageEditorOverlay').classList.remove('open');
+}
+
+function renderStageEditorList() {
+  const list = document.getElementById('stageEditorList');
+  list.innerHTML = stageEditorStages.map((s, i) => 
+    '<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md)">' +
+      '<input type="color" value="' + s.color + '" style="width:32px;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer" onchange="stageEditorStages[' + i + '].color=this.value">' +
+      '<input value="' + esc(s.label) + '" style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)" onchange="stageEditorStages[' + i + '].label=this.value">' +
+      '<span style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">' + esc(s.id) + '</span>' +
+      '<button class="btn ghost sm" onclick="removeStage(' + i + ')" style="padding:2px 6px;color:var(--err)">✕</button>' +
+    '</div>'
+  ).join('');
+}
+
+function removeStage(i) {
+  if (stageEditorStages.length <= 1) {
+    toast('Cannot delete the last stage', 'err');
+    return;
+  }
+  const stage = stageEditorStages[i];
+  // Count clients with this status.
+  const affected = clients.filter(c => c.status === stage.id).length;
+  const remaining = stageEditorStages.filter((_, idx) => idx !== i);
+  const target = remaining.length > 0 ? remaining[0] : null;
+  const targetLabel = target ? target.label : 'unknown';
+  const msg = "You're attempting to delete " + stage.label + ", " + affected + " leads will be moved to " + targetLabel;
+  if (!confirm(msg)) return;
+  stageEditorStages.splice(i, 1);
+  renderStageEditorList();
+}
+
+function addNewStage() {
+  const label = document.getElementById('newStageLabel').value.trim();
+  const color = document.getElementById('newStageColor').value;
+  if (!label) { toast('Stage name required', 'err'); return; }
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'stage_' + Date.now();
+  if (stageEditorStages.some(s => s.id === id)) { toast('Stage already exists', 'err'); return; }
+  stageEditorStages.push({ id, label, color, statusColor: 'muted' });
+  document.getElementById('newStageLabel').value = '';
+  renderStageEditorList();
+}
+
+async function saveStages() {
+  try {
+    await savePipelineStages(stageEditorStages);
+    toast('Pipeline stages saved', 'ok');
+    closeStageEditor();
+    await loadBoard();
+  } catch (e) { toast('Save failed: ' + e, 'err'); }
+}
 let clients = [];
 let currentDetail = null;
 let toastTimer = null;
@@ -1636,10 +1731,9 @@ async function loadBoard() {
     const col = document.createElement('div'); col.className='column';
     col.dataset.status = st;
     col.innerHTML = '<div class="column-header"><div class="column-title"><span style="width:6px;height:6px;border-radius:50%;background:'+ (COLUMN_COLOR[st]||'#62666d') +'"></span>'+(STATUS_LABEL[st]||st)+'</div><span class="column-count">'+inCol.length+'</span></div>';
-    col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
-    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('dragover', (e) => { e.preventDefault(); });
     col.addEventListener('drop', async (e) => {
-      e.preventDefault(); col.classList.remove('drag-over');
+      e.preventDefault();
       const id = Number(e.dataTransfer.getData('text/plain'));
       if (!id) return;
       try {
@@ -1658,9 +1752,12 @@ async function loadBoard() {
         + (c.deal_value?'<span class="value">€'+c.deal_value+'</span>':'')
         + (c.next_action_at?'<span>'+fmtDate(c.next_action_at)+'</span>':'')
         + '</div>';
-      card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(c.id)); card.classList.add('dragging'); });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
-      card.onclick = () => openDetail(c.id);
+      card.addEventListener('mousedown', () => { card.classList.add('holding'); });
+      card.addEventListener('mouseup', () => { card.classList.remove('holding'); });
+      card.addEventListener('mouseleave', () => { card.classList.remove('holding'); });
+      card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(c.id)); card.classList.remove('holding'); card.classList.add('dragging'); });
+      card.addEventListener('dragend', () => { card.classList.remove('dragging'); card.classList.remove('holding'); });
+      card.onclick = () => { if (panMoved) { panMoved = false; return; } openDetail(c.id); };
       col.appendChild(card);
     }
     cols.appendChild(col);
@@ -2339,7 +2436,35 @@ async function addToCrm(b, btn) {
   }
 }
 
-try { loadBoard().then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }
+// Horizontal drag-to-pan on the pipeline board (mouse drag on empty space scrolls left/right).
+let isPanning = false;
+let panStartX = 0;
+let panStartScroll = 0;
+let panMoved = false;
+const boardEl = document.getElementById('boardCols');
+if (boardEl) {
+  boardEl.addEventListener('mousedown', (e) => {
+    if (e.target.closest && e.target.closest('.kanban-card')) return;
+    isPanning = true;
+    panMoved = false;
+    panStartX = e.clientX;
+    panStartScroll = boardEl.scrollLeft;
+    boardEl.classList.add('panning');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStartX;
+    if (Math.abs(dx) > 4) panMoved = true;
+    boardEl.scrollLeft = panStartScroll - dx;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!isPanning) return;
+    isPanning = false;
+    boardEl.classList.remove('panning');
+  });
+}
+try { loadPipelineStages().then(() => loadBoard()).then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }
 catch (e) { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;bottom:0;left:0;right:0;background:#ef4444;color:#fff;padding:10px;font-family:monospace;font-size:12px">'+String(e)+'</div>'); console.error(e); }
 
 // Command palette
@@ -2653,5 +2778,23 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 </div>
+<!-- Stage editor modal -->
+<div class="modal-overlay" id="stageEditorOverlay" onclick="if(event.target===this) closeStageEditor()">
+  <div class="modal" style="width:520px;max-height:80vh;overflow:auto">
+    <h3 style="margin:0 0 12px">Edit pipeline stages</h3>
+    <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Add, remove, or rename stages. Changes apply to the board immediately.</p>
+    <div id="stageEditorList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input id="newStageLabel" placeholder="New stage name" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)">
+      <input id="newStageColor" type="color" value="#62666d" style="width:40px;height:34px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);cursor:pointer">
+      <button class="btn sm" onclick="addNewStage()">+ Add</button>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" onclick="closeStageEditor()">Cancel</button>
+      <button class="btn" onclick="saveStages()">Save</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
