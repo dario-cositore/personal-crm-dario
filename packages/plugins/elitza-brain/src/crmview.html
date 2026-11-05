@@ -2275,13 +2275,49 @@ async function enrichCompanyDomain(domain) {
   } catch (e) { toast('Enrich failed: ' + e, 'err'); }
 }
 
+const SCOUT_VERTICAL_MAP = {
+  'dentisti':'dental', 'dentist':'dental', 'dentists':'dental',
+  'parrucchieri':'beauty', 'hairdresser':'beauty', 'hairdressers':'beauty',
+  'idraulici':'trades', 'plumber':'trades', 'plumbers':'trades',
+  'avvocati':'legal', 'lawyer':'legal', 'lawyers':'legal', 'attorney':'legal',
+  'commercialisti':'accounting', 'accountant':'accounting', 'accountants':'accounting',
+  'ristoranti':'food', 'restaurant':'food', 'restaurants':'food',
+  'bar':'food', 'cafe':'food', 'cafes':'food',
+  'autofficine':'automotive', 'farmacie':'pharmacy', 'pharmacy':'pharmacy',
+  'amenity=dentist':'dental', 'shop=hairdresser':'beauty', 'craft=plumber':'trades',
+  'office=lawyer':'legal', 'office=accountant':'accounting', 'amenity=restaurant':'food',
+  'amenity=cafe':'food', 'amenity=pharmacy':'pharmacy',
+};
+
+function inferBusinessType(b) {
+  const name = (b.name || '').toLowerCase();
+  const cat = (b.category || '').toLowerCase();
+  if (/agency|agenzia|studio (di |associato)/.test(name)) return 'agency';
+  if (/srl|srls|spa|ltd|inc|gmbh|llc|sas|snc/.test(name)) return 'company';
+  if (/dr\.|dott\.|doctor|dentist|avvocato|commercialista/.test(name + ' ' + cat)) return 'solo_practitioner';
+  if (cat.includes('office') || cat.includes('shop')) return 'business';
+  return 'business';
+}
+
 async function addToCrm(b, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
-    const r = await api('/api/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:b.name, vertical:'scouted', status:'scouted', score:50, address:b.address, phone:b.phone, website:b.website, email:b.email||null, notes:'From scout ('+(b.category||'')+')' + (b.rating?' · rating '+b.rating:''), source:'scout' }) });
+    const cat = (b.category || '').toLowerCase();
+    const q = (document.getElementById('scoutQ') ? document.getElementById('scoutQ').value : '').toLowerCase();
+    const vertical = SCOUT_VERTICAL_MAP[q] || SCOUT_VERTICAL_MAP[cat] || SCOUT_VERTICAL_MAP[cat.split('=')[1]] || 'scouted';
+    const bizType = inferBusinessType(b);
+    const r = await api('/api/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:b.name, vertical:vertical, status:'scouted', score:50, address:b.address, phone:b.phone, website:b.website, email:b.email||null, notes:'From scout ('+(b.category||'')+') · type: '+bizType + (b.rating?' · rating '+b.rating:''), source:'scout' }) });
     const name = r.client ? r.client.name : b.name;
+    const clientId = r.client ? r.client.id : null;
     if (btn) { btn.textContent = '✓ Added'; btn.classList.remove('secondary'); btn.classList.add('ok'); }
-    toast('Added to CRM: ' + name + ' — open Pipeline to view', 'ok');
+    if (btn && clientId) {
+      const viewBtn = document.createElement('button');
+      viewBtn.className = 'btn sm primary';
+      viewBtn.textContent = '→ View';
+      viewBtn.onclick = () => openDetail(clientId);
+      btn.parentNode.insertBefore(viewBtn, btn.nextSibling);
+    }
+    toast('Added to CRM: ' + name + ' (' + bizType + ')', 'ok');
     loadBoard();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '+ Add to CRM'; }
