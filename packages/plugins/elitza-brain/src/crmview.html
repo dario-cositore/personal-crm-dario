@@ -1552,12 +1552,16 @@ async function loadDigest() {
   } catch(e) { document.getElementById('digestOut').textContent = 'Error: ' + e.message; }
 }
 
-function toast(msg, kind) {
+function toast(msg, kind, action) {
   const t = document.getElementById('toast');
-  t.innerHTML = '<div class="dot"></div><span>'+esc(msg)+'</span>';
+  let html = '<div class="dot"></div><span>'+esc(msg)+'</span>';
+  if (action && action.label && action.onClick) {
+    html += ' <button class="toast-action" style="margin-left:10px;padding:2px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.15);color:inherit;cursor:pointer;font-size:12px;font-weight:600" onclick="'+action.onClick+'()">'+esc(action.label)+'</button>';
+  }
+  t.innerHTML = html;
   t.className = 'toast show ' + (kind||'');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 5000);
 }
 
 async function api(path, opts) {
@@ -2299,6 +2303,9 @@ function inferBusinessType(b) {
   return 'business';
 }
 
+// Global holder for the last added client ID (used by toast action).
+let lastAddedClientId = null;
+
 async function addToCrm(b, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
@@ -2309,15 +2316,22 @@ async function addToCrm(b, btn) {
     const r = await api('/api/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:b.name, vertical:vertical, status:'scouted', score:50, address:b.address, phone:b.phone, website:b.website, email:b.email||null, notes:'From scout ('+(b.category||'')+') · type: '+bizType + (b.rating?' · rating '+b.rating:''), source:'scout' }) });
     const name = r.client ? r.client.name : b.name;
     const clientId = r.client ? r.client.id : null;
-    if (btn) { btn.textContent = '✓ Added'; btn.classList.remove('secondary'); btn.classList.add('ok'); }
+    if (btn) { btn.textContent = '✓ Added'; btn.classList.remove('secondary'); btn.classList.add('ok'); btn.disabled = true; }
+    // Add a direct "View" button next to the added button.
     if (btn && clientId) {
       const viewBtn = document.createElement('button');
       viewBtn.className = 'btn sm primary';
-      viewBtn.textContent = '→ View';
-      viewBtn.onclick = () => openDetail(clientId);
-      btn.parentNode.insertBefore(viewBtn, btn.nextSibling);
+      viewBtn.style.marginLeft = '6px';
+      viewBtn.textContent = '→ View lead';
+      viewBtn.onclick = function() { openDetail(clientId); };
+      btn.parentNode.appendChild(viewBtn);
     }
-    toast('Added to CRM: ' + name + ' (' + bizType + ')', 'ok');
+    // Show clickable toast notification.
+    lastAddedClientId = clientId;
+    if (clientId) {
+      window._viewAddedClient = function() { openDetail(clientId); document.getElementById('toast').classList.remove('show'); };
+    }
+    toast('Added: ' + name + ' (' + bizType + ')', 'ok', { label: 'View in pipeline →', onClick: '_viewAddedClient' });
     loadBoard();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '+ Add to CRM'; }
