@@ -964,7 +964,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 const created = await ctx.session.create({ title: "CRM chat" })
                 chatSessionId = created.id
               }
-              await ctx.session.prompt({ sessionID: chatSessionId, text: { text } } as any)
+              await ctx.session.prompt({ sessionID: chatSessionId, text: text } as any)
               await new Promise((r) => setTimeout(r, 3000))
               const msgs = await ctx.session.context({ sessionID: chatSessionId })
               for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1010,7 +1010,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 const created = await ctx.session.create({ title: "CRM chat" })
                 chatSessionId = created.id
               }
-              await ctx.session.prompt({ sessionID: chatSessionId, text: { text } } as any)
+              await ctx.session.prompt({ sessionID: chatSessionId, text: text } as any)
               await new Promise((r) => setTimeout(r, 2000))
               const msgs = await ctx.session.context({ sessionID: chatSessionId })
               let reply = ""
