@@ -253,9 +253,19 @@
     padding-bottom: 12px;
     min-height: 500px;
     align-items: flex-start;
+    cursor: grab;
+    user-select: none;
+    scroll-behavior: auto;
   }
-  .column.drag-over { outline: 2px dashed var(--accent); background: var(--bg-hover); }
-  .kanban-card.dragging { opacity: 0.5; }
+  .board.panning { cursor: grabbing; }
+  /* .column.drag-over removed — only the dragged card is highlighted */
+  .kanban-card.dragging, .kanban-card.holding {
+    opacity: 0.9;
+    border-color: var(--accent);
+    box-shadow: var(--shadow-glow);
+    transform: scale(1.02);
+    transition: border-color 0.1s, box-shadow 0.1s, transform 0.1s;
+  }
   .column {
     min-width: 248px; width: 248px;
     background: var(--bg-panel);
@@ -750,9 +760,10 @@
         </div>
       </div>
       <div id="board" class="view active">
-        <div class="page-header">
-          <h1>Pipeline</h1>
-          <p>Every client, by stage. Drag a card to move it. Click to open details.</p>
+        <div class="page-header" style="display:flex;align-items:center;gap:10px">
+          <h1 style="margin:0">Pipeline</h1>
+          <button class="btn ghost sm" onclick="openStageEditor()" title="Edit pipeline stages" style="padding:4px 8px;font-size:13px">✏️</button>
+          <p style="margin:0;color:var(--text-muted);font-size:13px">Every client, by stage. Drag a card to move it. Click to open details.</p>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
           <label style="color:var(--text-muted);font-size:13px">Per page:</label>
@@ -1016,10 +1027,94 @@
 </div>
 
 <script>
-const STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
-const STATUS_LABEL = {scouted:"Scouted",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
-const STATUS_COLOR = {scouted:"muted",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
-const COLUMN_COLOR = {scouted:"#62666d",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#7170ff",proposal:"#7170ff",workbook:"#7170ff",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
+let STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
+let STATUS_LABEL = {scouted:"Scouted",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
+let STATUS_COLOR = {scouted:"muted",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
+let COLUMN_COLOR = {scouted:"#62666d",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#7170ff",proposal:"#7170ff",workbook:"#7170ff",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
+
+async function loadPipelineStages() {
+  try {
+    const res = await api('/api/pipeline/stages');
+    const stages = res.stages || [];
+    if (stages.length > 0) {
+      STATUSES = stages.map(s => s.id);
+      STATUS_LABEL = {};
+      STATUS_COLOR = {};
+      COLUMN_COLOR = {};
+      for (const s of stages) {
+        STATUS_LABEL[s.id] = s.label;
+        STATUS_COLOR[s.id] = s.statusColor || 'muted';
+        COLUMN_COLOR[s.id] = s.color || '#62666d';
+      }
+    }
+  } catch (e) { /* use defaults */ }
+}
+
+async function savePipelineStages(stages) {
+  await api('/api/pipeline/stages', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ stages }) });
+  await loadPipelineStages();
+}
+
+let stageEditorStages = [];
+
+function openStageEditor() {
+  stageEditorStages = STATUSES.map(id => ({ id, label: STATUS_LABEL[id] || id, color: COLUMN_COLOR[id] || '#62666d', statusColor: STATUS_COLOR[id] || 'muted' }));
+  renderStageEditorList();
+  document.getElementById('stageEditorOverlay').classList.add('open');
+}
+
+function closeStageEditor() {
+  document.getElementById('stageEditorOverlay').classList.remove('open');
+}
+
+function renderStageEditorList() {
+  const list = document.getElementById('stageEditorList');
+  list.innerHTML = stageEditorStages.map((s, i) => 
+    '<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md)">' +
+      '<input type="color" value="' + s.color + '" style="width:32px;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer" onchange="stageEditorStages[' + i + '].color=this.value">' +
+      '<input value="' + esc(s.label) + '" style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)" onchange="stageEditorStages[' + i + '].label=this.value">' +
+      '<span style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">' + esc(s.id) + '</span>' +
+      '<button class="btn ghost sm" onclick="removeStage(' + i + ')" style="padding:2px 6px;color:var(--err)">✕</button>' +
+    '</div>'
+  ).join('');
+}
+
+function removeStage(i) {
+  if (stageEditorStages.length <= 1) {
+    toast('Cannot delete the last stage', 'err');
+    return;
+  }
+  const stage = stageEditorStages[i];
+  // Count clients with this status.
+  const affected = clients.filter(c => c.status === stage.id).length;
+  const remaining = stageEditorStages.filter((_, idx) => idx !== i);
+  const target = remaining.length > 0 ? remaining[0] : null;
+  const targetLabel = target ? target.label : 'unknown';
+  const msg = "You're attempting to delete " + stage.label + ", " + affected + " leads will be moved to " + targetLabel;
+  if (!confirm(msg)) return;
+  stageEditorStages.splice(i, 1);
+  renderStageEditorList();
+}
+
+function addNewStage() {
+  const label = document.getElementById('newStageLabel').value.trim();
+  const color = document.getElementById('newStageColor').value;
+  if (!label) { toast('Stage name required', 'err'); return; }
+  const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'stage_' + Date.now();
+  if (stageEditorStages.some(s => s.id === id)) { toast('Stage already exists', 'err'); return; }
+  stageEditorStages.push({ id, label, color, statusColor: 'muted' });
+  document.getElementById('newStageLabel').value = '';
+  renderStageEditorList();
+}
+
+async function saveStages() {
+  try {
+    await savePipelineStages(stageEditorStages);
+    toast('Pipeline stages saved', 'ok');
+    closeStageEditor();
+    await loadBoard();
+  } catch (e) { toast('Save failed: ' + e, 'err'); }
+}
 let clients = [];
 let currentDetail = null;
 let toastTimer = null;
@@ -1298,7 +1393,15 @@ async function loadSettings() {
       + '<div class="field"><span class="label">Role</span><span class="value">'+esc(d.role||'—')+'</span></div>'
       + '<div class="field"><span class="label">Voice</span><span class="value">'+esc(d.voice||'—')+'</span></div>'
       + '<div class="field"><span class="label">Provider</span><span class="value">'+esc(d.provider||'—')+'</span></div>'
-      + '<div class="field"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+      + '<select id="providerSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="changeProvider(this.value)">'
+      + '<option value="opencode-go"'+(d.provider==='opencode-go'?' selected':'')+'>OpenCode Go</option>'
+      + '<option value="mimo"'+(d.provider==='mimo'?' selected':'')+'>MiMo</option>'
+      + '</select>'
+      + '<select id="modelSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px;flex:1" onchange="changeModel(this.value)"></select>'
+      + '<select id="variantSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="changeVariant(this.value)"></select>'
+      + '</div>'
+      + '<div class="field" style="margin-top:8px"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
       + '<div class="field"><span class="label">Maton key</span><span class="value">'+esc(d.maton_key||'—')+'</span></div>'
       + '</div>'
       + '<div class="section-card"><h4>Vertical</h4>'
@@ -1344,7 +1447,53 @@ async function loadSettings() {
       + '<div class="field"><span class="label">CRM port</span><span class="value">'+d.crm_port+'</span></div>'
       + '</div>';
   loadMatonStatus();
+  loadModelOptions(d.provider || 'opencode-go', d.model || 'beam-free');
+  loadVariantOptions(d.model || 'beam-free', d.variant || '');
   } catch(e) { document.getElementById('settingsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
+}
+
+async function loadModelOptions(provider, currentModel) {
+  try {
+    const r = await api('/api/settings/models?provider=' + encodeURIComponent(provider));
+    const sel = document.getElementById('modelSelect');
+    if (!sel) return;
+    sel.innerHTML = (r.models || []).map(m => '<option value="'+esc(m)+'"'+(m===currentModel?' selected':'')+'>'+esc(m)+'</option>').join('');
+  } catch(e) { console.error('loadModelOptions', e); }
+}
+
+async function loadVariantOptions(model, currentVariant) {
+  try {
+    const r = await api('/api/settings/variants?model=' + encodeURIComponent(model));
+    const sel = document.getElementById('variantSelect');
+    if (!sel) return;
+    const variants = r.variants || [];
+    if (variants.length === 0) {
+      sel.innerHTML = '<option value="">no variants</option>';
+      sel.disabled = true;
+    } else {
+      sel.disabled = false;
+      sel.innerHTML = variants.map(v => '<option value="'+esc(v)+'"'+(v===currentVariant?' selected':'')+'>'+esc(v)+'</option>').join('');
+    }
+  } catch(e) { console.error('loadVariantOptions', e); }
+}
+
+async function changeProvider(provider) {
+  await api('/api/settings/provider', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
+  toast('Provider set to ' + provider, 'ok');
+  const r = await api('/api/settings');
+  loadModelOptions(provider, r.model);
+  loadVariantOptions(r.model, r.variant);
+}
+
+async function changeModel(model) {
+  await api('/api/settings/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+  toast('Model set to ' + model, 'ok');
+  loadVariantOptions(model, '');
+}
+
+async function changeVariant(variant) {
+  await api('/api/settings/variant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variant }) });
+  toast('Variant set to ' + variant, 'ok');
 }
 async function setVertical(v) {
   await api('/api/settings/vertical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vertical: v }) });
@@ -1498,12 +1647,16 @@ async function loadDigest() {
   } catch(e) { document.getElementById('digestOut').textContent = 'Error: ' + e.message; }
 }
 
-function toast(msg, kind) {
+function toast(msg, kind, action) {
   const t = document.getElementById('toast');
-  t.innerHTML = '<div class="dot"></div><span>'+esc(msg)+'</span>';
+  let html = '<div class="dot"></div><span>'+esc(msg)+'</span>';
+  if (action && action.label && action.onClick) {
+    html += ' <button class="toast-action" style="margin-left:10px;padding:2px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.15);color:inherit;cursor:pointer;font-size:12px;font-weight:600" onclick="'+action.onClick+'()">'+esc(action.label)+'</button>';
+  }
+  t.innerHTML = html;
   t.className = 'toast show ' + (kind||'');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 5000);
 }
 
 async function api(path, opts) {
@@ -1578,10 +1731,9 @@ async function loadBoard() {
     const col = document.createElement('div'); col.className='column';
     col.dataset.status = st;
     col.innerHTML = '<div class="column-header"><div class="column-title"><span style="width:6px;height:6px;border-radius:50%;background:'+ (COLUMN_COLOR[st]||'#62666d') +'"></span>'+(STATUS_LABEL[st]||st)+'</div><span class="column-count">'+inCol.length+'</span></div>';
-    col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
-    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('dragover', (e) => { e.preventDefault(); });
     col.addEventListener('drop', async (e) => {
-      e.preventDefault(); col.classList.remove('drag-over');
+      e.preventDefault();
       const id = Number(e.dataTransfer.getData('text/plain'));
       if (!id) return;
       try {
@@ -1600,9 +1752,12 @@ async function loadBoard() {
         + (c.deal_value?'<span class="value">€'+c.deal_value+'</span>':'')
         + (c.next_action_at?'<span>'+fmtDate(c.next_action_at)+'</span>':'')
         + '</div>';
-      card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(c.id)); card.classList.add('dragging'); });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
-      card.onclick = () => openDetail(c.id);
+      card.addEventListener('mousedown', () => { card.classList.add('holding'); });
+      card.addEventListener('mouseup', () => { card.classList.remove('holding'); });
+      card.addEventListener('mouseleave', () => { card.classList.remove('holding'); });
+      card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(c.id)); card.classList.remove('holding'); card.classList.add('dragging'); });
+      card.addEventListener('dragend', () => { card.classList.remove('dragging'); card.classList.remove('holding'); });
+      card.onclick = () => { if (panMoved) { panMoved = false; return; } openDetail(c.id); };
       col.appendChild(card);
     }
     cols.appendChild(col);
@@ -1919,17 +2074,8 @@ async function runScout() {
   btn.disabled = true;
   btn.innerHTML = '<span class="scout-pulse"></span> Scouting…';
 
-  const stages = [
-    '🔍 Initializing scout engine…',
-    '📡 Querying Overpass (OpenStreetMap) for "' + q + '" in ' + loc + '…',
-    '🗺️  Photon geocoding fallback ready…',
-    '🧹 Deduplicating by name + address…',
-    '✨ Enriching contact details…',
-  ];
-  for (const s of stages) {
-    scoutLog(s, 'info');
-    await scoutSleep(450);
-  }
+  const t0 = Date.now();
+  scoutLog('🔍 Scouting "' + q + '" in ' + loc + ' (limit ' + n + ')…', 'info');
 
   let res;
   try { res = await api('/api/scout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ location: loc, query: q, limit: n }) }); }
@@ -1939,17 +2085,28 @@ async function runScout() {
     btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg> Scout';
     return;
   }
+  // Show real steps from the backend.
+  if (res.steps && res.steps.length) {
+    for (const step of res.steps) {
+      const level = step.startsWith('❌') ? 'err' : step.startsWith('⚠️') ? 'warn' : step.startsWith('✅') ? 'ok' : 'info';
+      scoutLog(step, level);
+    }
+  }
   if (res.error) {
     scoutLog('❌ Error: ' + res.error, 'err');
     status.className = 'scout-status show err'; status.textContent = 'Error: ' + res.error;
     btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg> Scout';
     return;
   }
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const sources = (res.meta && res.meta.sources_used) || [];
-  scoutLog('✅ Found ' + res.businesses.length + ' result(s) via ' + (sources.join(', ') || 'unknown'), 'ok');
+  scoutLog('✅ Found ' + res.businesses.length + ' result(s) in ' + elapsed + 's via ' + (sources.join(', ') || 'unknown'), 'ok');
+  const withPhone = (res.businesses || []).filter(b => b.phone).length;
+  const withEmail = (res.businesses || []).filter(b => b.email).length;
+  const withWeb = (res.businesses || []).filter(b => b.website).length;
+  scoutLog('📊 ' + withPhone + ' with phone, ' + withEmail + ' with email, ' + withWeb + ' with website', 'info');
   if (res.businesses.length) {
     scoutLog('📦 Rendering ' + res.businesses.length + ' business card(s)…', 'info');
-    await scoutSleep(300);
   }
 
   cards.innerHTML = '';
@@ -2219,13 +2376,59 @@ async function enrichCompanyDomain(domain) {
   } catch (e) { toast('Enrich failed: ' + e, 'err'); }
 }
 
+const SCOUT_VERTICAL_MAP = {
+  'dentisti':'dental', 'dentist':'dental', 'dentists':'dental',
+  'parrucchieri':'beauty', 'hairdresser':'beauty', 'hairdressers':'beauty',
+  'idraulici':'trades', 'plumber':'trades', 'plumbers':'trades',
+  'avvocati':'legal', 'lawyer':'legal', 'lawyers':'legal', 'attorney':'legal',
+  'commercialisti':'accounting', 'accountant':'accounting', 'accountants':'accounting',
+  'ristoranti':'food', 'restaurant':'food', 'restaurants':'food',
+  'bar':'food', 'cafe':'food', 'cafes':'food',
+  'autofficine':'automotive', 'farmacie':'pharmacy', 'pharmacy':'pharmacy',
+  'amenity=dentist':'dental', 'shop=hairdresser':'beauty', 'craft=plumber':'trades',
+  'office=lawyer':'legal', 'office=accountant':'accounting', 'amenity=restaurant':'food',
+  'amenity=cafe':'food', 'amenity=pharmacy':'pharmacy',
+};
+
+function inferBusinessType(b) {
+  const name = (b.name || '').toLowerCase();
+  const cat = (b.category || '').toLowerCase();
+  if (/agency|agenzia|studio (di |associato)/.test(name)) return 'agency';
+  if (/srl|srls|spa|ltd|inc|gmbh|llc|sas|snc/.test(name)) return 'company';
+  if (/dr\.|dott\.|doctor|dentist|avvocato|commercialista/.test(name + ' ' + cat)) return 'solo_practitioner';
+  if (cat.includes('office') || cat.includes('shop')) return 'business';
+  return 'business';
+}
+
+// Global holder for the last added client ID (used by toast action).
+let lastAddedClientId = null;
+
 async function addToCrm(b, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
-    const r = await api('/api/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:b.name, vertical:'scouted', status:'scouted', score:50, address:b.address, phone:b.phone, website:b.website, email:b.email||null, notes:'From scout ('+(b.category||'')+')' + (b.rating?' · rating '+b.rating:''), source:'scout' }) });
+    const cat = (b.category || '').toLowerCase();
+    const q = (document.getElementById('scoutQ') ? document.getElementById('scoutQ').value : '').toLowerCase();
+    const vertical = SCOUT_VERTICAL_MAP[q] || SCOUT_VERTICAL_MAP[cat] || SCOUT_VERTICAL_MAP[cat.split('=')[1]] || 'scouted';
+    const bizType = inferBusinessType(b);
+    const r = await api('/api/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:b.name, vertical:vertical, status:'scouted', score:50, address:b.address, phone:b.phone, website:b.website, email:b.email||null, notes:'From scout ('+(b.category||'')+') · type: '+bizType + (b.rating?' · rating '+b.rating:''), source:'scout' }) });
     const name = r.client ? r.client.name : b.name;
-    if (btn) { btn.textContent = '✓ Added'; btn.classList.remove('secondary'); btn.classList.add('ok'); }
-    toast('Added to CRM: ' + name + ' — open Pipeline to view', 'ok');
+    const clientId = r.client ? r.client.id : null;
+    if (btn) { btn.textContent = '✓ Added'; btn.classList.remove('secondary'); btn.classList.add('ok'); btn.disabled = true; }
+    // Add a direct "View" button next to the added button.
+    if (btn && clientId) {
+      const viewBtn = document.createElement('button');
+      viewBtn.className = 'btn sm primary';
+      viewBtn.style.marginLeft = '6px';
+      viewBtn.textContent = '→ View lead';
+      viewBtn.onclick = function() { openDetail(clientId); };
+      btn.parentNode.appendChild(viewBtn);
+    }
+    // Show clickable toast notification.
+    lastAddedClientId = clientId;
+    if (clientId) {
+      window._viewAddedClient = function() { openDetail(clientId); document.getElementById('toast').classList.remove('show'); };
+    }
+    toast('Added: ' + name + ' (' + bizType + ')', 'ok', { label: 'View in pipeline →', onClick: '_viewAddedClient' });
     loadBoard();
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '+ Add to CRM'; }
@@ -2233,7 +2436,35 @@ async function addToCrm(b, btn) {
   }
 }
 
-try { loadBoard().then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }
+// Horizontal drag-to-pan on the pipeline board (mouse drag on empty space scrolls left/right).
+let isPanning = false;
+let panStartX = 0;
+let panStartScroll = 0;
+let panMoved = false;
+const boardEl = document.getElementById('boardCols');
+if (boardEl) {
+  boardEl.addEventListener('mousedown', (e) => {
+    if (e.target.closest && e.target.closest('.kanban-card')) return;
+    isPanning = true;
+    panMoved = false;
+    panStartX = e.clientX;
+    panStartScroll = boardEl.scrollLeft;
+    boardEl.classList.add('panning');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStartX;
+    if (Math.abs(dx) > 4) panMoved = true;
+    boardEl.scrollLeft = panStartScroll - dx;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!isPanning) return;
+    isPanning = false;
+    boardEl.classList.remove('panning');
+  });
+}
+try { loadPipelineStages().then(() => loadBoard()).then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }
 catch (e) { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;bottom:0;left:0;right:0;background:#ef4444;color:#fff;padding:10px;font-family:monospace;font-size:12px">'+String(e)+'</div>'); console.error(e); }
 
 // Command palette
@@ -2547,5 +2778,23 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
   </div>
 </div>
+<!-- Stage editor modal -->
+<div class="modal-overlay" id="stageEditorOverlay" onclick="if(event.target===this) closeStageEditor()">
+  <div class="modal" style="width:520px;max-height:80vh;overflow:auto">
+    <h3 style="margin:0 0 12px">Edit pipeline stages</h3>
+    <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Add, remove, or rename stages. Changes apply to the board immediately.</p>
+    <div id="stageEditorList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input id="newStageLabel" placeholder="New stage name" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)">
+      <input id="newStageColor" type="color" value="#62666d" style="width:40px;height:34px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);cursor:pointer">
+      <button class="btn sm" onclick="addNewStage()">+ Add</button>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" onclick="closeStageEditor()">Cancel</button>
+      <button class="btn" onclick="saveStages()">Save</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

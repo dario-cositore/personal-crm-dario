@@ -90,7 +90,29 @@ function extractSocials(text: string): { linkedin?: string; twitter?: string; fa
   return result
 }
 
-function mimoConfig(): { url: string; key: string; model: string } {
+async function providerConfig(): Promise<{ url: string; key: string; model: string }> {
+  console.error("[enrichment] providerConfig called, ELITZA_CHAT_PROVIDER=", process.env.ELITZA_CHAT_PROVIDER, "HOME=", process.env.HOME)
+  const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
+  if (provider === "opencode-go") {
+    let key = process.env.OPENCODE_API_KEY?.trim() ?? ""
+    // Fall back to the opencode console credential stored in opencode.db.
+    if (!key) {
+      try {
+        const { default: Database } = await import("bun:sqlite")
+        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const db = new (Database as any)(dbPath, { readonly: true })
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
+        if (row?.value) {
+          const cred = JSON.parse(row.value)
+          if (cred.access) key = cred.access
+        }
+        db.close()
+      } catch (e) { console.error("[enrichment] providerConfig db error:", String(e)) }
+    }
+    const url = "https://opencode.ai/inference/go/openai/v1"
+    const model = "beam-free"
+    return { url, key, model }
+  }
   const key = process.env.XIAOMI_API_KEY?.trim() ?? ""
   let url = "https://api.xiaomimimo.com/v1"
   try {
@@ -162,9 +184,19 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
   const proposalPlaybook = readPlaybook("fixed-scope-proposal")
   const paymentPlaybook = readPlaybook("payment-terms")
 
-  const { url: mimoUrl, key: mimoKey, model } = mimoConfig()
+  const { url: mimoUrl, key: mimoKey, model: configModel } = await providerConfig()
+  let model = configModel
+  let variant = ""
+  try {
+    const { soulGet } = await import("./soul.js")
+    const saved = soulGet("chat_model", "")
+    if (saved) model = saved
+    variant = soulGet("chat_variant", "")
+  } catch {}
   if (!mimoKey) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: "XIAOMI_API_KEY is not set." }
+    const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
+    const keyName = provider === "opencode-go" ? "OPENCODE_API_KEY or opencode console credential" : "XIAOMI_API_KEY"
+    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: keyName + " is not set." }
   }
 
   const systemPrompt = `You are Elitza, an AI Enablement operator. You scout local businesses and design fixed-scope AI enablement sprints (EUR 1,500-3,500). You are given a business's public website content and your own playbooks. Produce a concise, honest enrichment report. Never invent facts; mark unknowns as "unknown".
@@ -238,12 +270,30 @@ Do not include anything outside these sections.`
 
   let responseText = ""
   try {
+    const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${mimoKey}`,
+    }
+    if (provider === "opencode-go") {
+      try {
+        const fs = await import("node:fs")
+        // read org ID from opencode.db
+        const Database = (await import("bun:sqlite")).default
+        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const db = new Database(dbPath, { readonly: true })
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
+        if (row?.value) {
+          const cred = JSON.parse(row.value)
+          if (cred.metadata?.orgID) headers["x-opencode-org-id"] = cred.metadata.orgID
+        }
+        db.close()
+      } catch { /* ignore */ }
+      headers["x-opencode-session"] = "elitza-enrich-" + Date.now()
+    }
     const res = await fetch(`${mimoUrl}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${mimoKey}`,
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: [
@@ -251,6 +301,7 @@ Do not include anything outside these sections.`
           { role: "user", content: userPrompt },
         ],
         temperature: 0.3,
+        ...(variant ? { reasoning_effort: variant } : {}),
         max_tokens: 1200,
       }),
       signal: AbortSignal.timeout(60000),

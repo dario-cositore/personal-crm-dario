@@ -76,6 +76,9 @@ export default Plugin.define({
   async setup(ctx) {
     const turns = new Map<string, TurnState>()
 
+    // Start the CRM house (browser UI) in the background.
+    try { startCrmView(ctx as any) } catch (e) { debug(`crm-view-start-error: ${String(e)}`) }
+
     await ctx.tool.transform((editor) => {
       const existing = new Set(editor.list().map((t) => t.name))
       for (const tool of makeBrainTools(ctx as never)) {

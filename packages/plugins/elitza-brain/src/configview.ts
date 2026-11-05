@@ -162,6 +162,20 @@ export function validateConfig(): string[] {
   if (typeof config.model === "string" && config.model.startsWith("elitza/") && !process.env.XIAOMI_API_KEY) {
     warnings.push("XIAOMI_API_KEY not set")
   }
+  const chatProvider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
+  if (chatProvider === "opencode-go" && !process.env.OPENCODE_API_KEY) {
+    // Check if opencode console credential exists in the database.
+    let hasConsoleCred = false
+    try {
+      const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+      if (fs.existsSync(dbPath)) {
+        hasConsoleCred = true
+      }
+    } catch { /* ignore */ }
+    if (!hasConsoleCred && !process.env.OPENCODE_API_KEY) {
+      warnings.push("No opencode console credential found (required for OpenCode Go chat)")
+    }
+  }
   if (!process.env.GOOGLE_MAPS_API_KEY) {
     warnings.push("GOOGLE_MAPS_API_KEY not set (Google Places fallback disabled; client_scout still works via OpenStreetMap)")
   }
