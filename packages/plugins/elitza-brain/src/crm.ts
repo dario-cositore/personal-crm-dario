@@ -54,7 +54,7 @@ export const CLIENT_STATUSES = [
   "done",
 ] as const
 
-export type ClientStatus = (typeof CLIENT_STATUSES)[number]
+export type ClientStatus = string
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS clients (
@@ -433,8 +433,8 @@ export interface AssetInput {
 // ---------------------------------------------------------------------------
 
 function assertStatus(status: string): ClientStatus {
-  if ((CLIENT_STATUSES as readonly string[]).includes(status)) return status as ClientStatus
-  throw new Error(`Unknown status "${status}". Valid: ${CLIENT_STATUSES.join(", ")}`)
+  if (!status || !status.trim()) throw new Error("Status cannot be empty.")
+  return status as ClientStatus
 }
 
 function rows<T>(sql: string, params: unknown[] = []): T[] {
