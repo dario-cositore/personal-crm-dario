@@ -80,6 +80,27 @@ export function memoryForget(query: string): string {
   return `Forgot memories matching: ${query}`
 }
 
+export function listKnowledge(limit = 50): { id: string; content: string; summary: string; importance: number; created: string; tags: string[] }[] {
+  const conn = db()
+  const rows = conn.query("SELECT id, content, summary, importance, created, tags FROM memories WHERE memory_type = 'semantic' AND tags LIKE '%knowledge%' ORDER BY importance DESC, created DESC LIMIT ?").all(limit) as any[]
+  return rows.map((r: any) => ({
+    id: r.id,
+    content: r.content,
+    summary: r.summary,
+    importance: r.importance,
+    created: r.created,
+    tags: (() => { try { return JSON.parse(r.tags || "[]") } catch { return [] } })(),
+  }))
+}
+
+export function deleteKnowledge(id: string): boolean {
+  const conn = db()
+  const before = conn.query("SELECT COUNT(*) as c FROM memories WHERE id = ?").get(id) as { c: number }
+  if (before.c === 0) return false
+  conn.run("DELETE FROM memories WHERE id = ?", [id])
+  return true
+}
+
 export function getLearningStats(): { skills: number; knowledge: number; lessons: number } {
   return { skills: 0, knowledge: 0, lessons: 0 }
 }

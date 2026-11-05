@@ -99,12 +99,11 @@ async function proxyChatToEngine(text: string): Promise<string> {
 }
 
 
-async function directMimoChat(text: string): Promise<{ thinking: string; reply: string }> {
-  // Standalone fallback: call MiMo directly with SOUL.md as system prompt.
-  let apiKey = process.env.XIAOMI_API_KEY || ""
-  let baseUrl = "https://api.xiaomimimo.com/v1"
-  // token-plan keys use the ams endpoint
-  if (apiKey.toLowerCase().startsWith("tp-")) baseUrl = "https://token-plan-ams.xiaomimimo.com/v1"
+async function directChat(text: string, provider: "mimo" | "opencode-go" = "opencode-go"): Promise<{ thinking: string; reply: string }> {
+  // Standalone fallback: call the configured provider directly with SOUL.md as system prompt.
+  let apiKey = ""
+  let baseUrl = ""
+  let model = "mimo-v2.6-flash"
   let soul = ""
   let home = process.env.ELITZA_HOME || (process.env.HOME || "") + "/.elitza"
   try {
@@ -121,12 +120,37 @@ async function directMimoChat(text: string): Promise<{ thinking: string; reply: 
       const k = t.slice(0, eq).trim()
       let v = t.slice(eq + 1).trim()
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
-      if (k === "XIAOMI_API_KEY" && !apiKey) apiKey = v
+      if (provider === "mimo" && k === "XIAOMI_API_KEY" && !apiKey) apiKey = v
+      if (provider === "opencode-go" && k === "OPENCODE_API_KEY" && !apiKey) apiKey = v
     }
     const soulPath = path.join(home, "SOUL.md")
     try { soul = fs.readFileSync(soulPath, "utf8").slice(0, 800) } catch {}
   } catch { /* ignore */ }
-  if (!apiKey) return { thinking: "", reply: "No XIAOMI_API_KEY configured. Run `elitza` setup first." }
+  if (provider === "mimo") {
+    apiKey = apiKey || process.env.XIAOMI_API_KEY || ""
+    baseUrl = "https://api.xiaomimimo.com/v1"
+    if (apiKey.toLowerCase().startsWith("tp-")) baseUrl = "https://token-plan-ams.xiaomimimo.com/v1"
+    model = "mimo-v2.6-flash"
+  } else {
+    // Read the opencode console credential from the opencode.db if no API key is set.
+    if (!apiKey) {
+      try {
+        const Database = (await import("bun:sqlite")).default
+        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const db = new Database(dbPath, { readonly: true })
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
+        if (row?.value) {
+          const cred = JSON.parse(row.value)
+          if (cred.access) apiKey = cred.access
+        }
+        db.close()
+      } catch { /* ignore */ }
+    }
+    apiKey = apiKey || process.env.OPENCODE_API_KEY || ""
+    baseUrl = "https://opencode.ai/inference/go/openai/v1"
+    model = "beam-free"
+  }
+  if (!apiKey) return { thinking: "", reply: "No API key configured for " + provider + ". Run `elitza` setup first." }
   // Expose ALL brain tools to the model so Elitza can touch every aspect of the CRM.
   const brainTools = makeBrainTools({ generate: { text: async (input: { prompt: string }) => ({ data: { text: "" } }) } })
   const tools = brainTools.map((t) => ({
@@ -151,11 +175,27 @@ async function directMimoChat(text: string): Promise<{ thinking: string; reply: 
   // tool-calling loop (omit tools on final pass so the model must answer in text)
   for (let iter = 0; iter < 4; iter++) {
     const isLast = iter === 3
-    const body: any = { model: "mimo-v2.6-flash", messages, stream: false }
+    const body: any = { model: model, messages, stream: false }
     if (!isLast) body.tools = tools
+    const fetchHeaders: Record<string, string> = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey }
+    if (provider === "opencode-go") {
+      // Read org ID from the opencode console credential.
+      try {
+        const Database = (await import("bun:sqlite")).default
+        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const db = new Database(dbPath, { readonly: true })
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%'").get() as any
+        if (row?.value) {
+          const cred = JSON.parse(row.value)
+          if (cred.metadata?.orgID) fetchHeaders["x-opencode-org-id"] = cred.metadata.orgID
+        }
+        db.close()
+      } catch { /* ignore */ }
+      fetchHeaders["x-opencode-session"] = "elitza-crm-" + Date.now()
+    }
     const res = await fetch(baseUrl + "/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+      headers: fetchHeaders,
       body: JSON.stringify(body),
     })
     const data = await res.json() as any
@@ -804,6 +844,40 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const { weeklyDigest } = await import("./crm.js")
           return json({ markdown: weeklyDigest() })
         }
+        if (path === "/api/chat" && req.method === "POST") {
+          const body = await readBody(req)
+          const text = String(body.text ?? body.message ?? "")
+          if (!text.trim()) return json({ error: "text required" }, 400)
+          const provider = String(body.provider ?? process.env.ELITZA_CHAT_PROVIDER ?? "opencode-go") as "mimo" | "opencode-go"
+          // Try engine session first
+          let reply = ""
+          let thinking = ""
+          if (ctx) {
+            try {
+              if (!chatSessionId) {
+                const created = await ctx.session.create({ title: "CRM chat" })
+                chatSessionId = created.id
+              }
+              await ctx.session.prompt({ sessionID: chatSessionId, text: { text } } as any)
+              await new Promise((r) => setTimeout(r, 2000))
+              const msgs = await ctx.session.context({ sessionID: chatSessionId })
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i]
+                if (m.type !== "assistant") continue
+                reply = (m.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\\n")
+                break
+              }
+            } catch (e) { reply = "" }
+          }
+          if (!reply || reply === "(no response)") {
+            try {
+              const r = await directChat(text, provider)
+              reply = r.reply
+              thinking = r.thinking
+            } catch (e) { reply = "Error: " + String(e) }
+          }
+          return json({ reply: reply || "(no response)", thinking })
+        }
         if (path === "/api/worksheets" && req.method === "GET") {
           return json({ worksheets: listWorksheets() })
         }
@@ -849,7 +923,8 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             try { reply = await proxyChatToEngine(text) } catch (e) { reply = "" }
             if (!reply || reply === "(no response)") {
               try {
-                const r = await directMimoChat(text)
+                const provider = (process.env.ELITZA_CHAT_PROVIDER || "opencode-go") as "mimo" | "opencode-go"
+                const r = await directChat(text, provider)
                 reply = r.reply
                 thinking = r.thinking
               } catch (e) { reply = "Error: " + String(e) }
