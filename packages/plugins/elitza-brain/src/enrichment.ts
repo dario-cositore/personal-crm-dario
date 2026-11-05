@@ -90,11 +90,26 @@ function extractSocials(text: string): { linkedin?: string; twitter?: string; fa
   return result
 }
 
-function providerConfig(): { url: string; key: string; model: string } {
+async function providerConfig(): Promise<{ url: string; key: string; model: string }> {
+  console.error("[enrichment] providerConfig called, ELITZA_CHAT_PROVIDER=", process.env.ELITZA_CHAT_PROVIDER, "HOME=", process.env.HOME)
   const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
   if (provider === "opencode-go") {
-    const key = process.env.OPENCODE_API_KEY?.trim() ?? ""
-    const url = "https://opencode.ai/inference/systemone/v1"
+    let key = process.env.OPENCODE_API_KEY?.trim() ?? ""
+    // Fall back to the opencode console credential stored in opencode.db.
+    if (!key) {
+      try {
+        const { default: Database } = await import("bun:sqlite")
+        const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+        const db = new (Database as any)(dbPath, { readonly: true })
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
+        if (row?.value) {
+          const cred = JSON.parse(row.value)
+          if (cred.access) key = cred.access
+        }
+        db.close()
+      } catch (e) { console.error("[enrichment] providerConfig db error:", String(e)) }
+    }
+    const url = "https://opencode.ai/inference/go/openai/v1"
     const model = "beam-free"
     return { url, key, model }
   }
@@ -169,7 +184,7 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
   const proposalPlaybook = readPlaybook("fixed-scope-proposal")
   const paymentPlaybook = readPlaybook("payment-terms")
 
-  const { url: mimoUrl, key: mimoKey, model: configModel } = providerConfig()
+  const { url: mimoUrl, key: mimoKey, model: configModel } = await providerConfig()
   let model = configModel
   let variant = ""
   try {
@@ -267,7 +282,7 @@ Do not include anything outside these sections.`
         const Database = (await import("bun:sqlite")).default
         const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
         const db = new Database(dbPath, { readonly: true })
-        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%'").get() as any
+        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
         if (row?.value) {
           const cred = JSON.parse(row.value)
           if (cred.metadata?.orgID) headers["x-opencode-org-id"] = cred.metadata.orgID
