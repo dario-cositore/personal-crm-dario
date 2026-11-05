@@ -15,7 +15,7 @@ import path from "node:path"
 // suffix (the launcher and mock harness both set OPENCODE_DB explicitly).
 export const ENGINE_DB =
   process.env.OPENCODE_DB ??
-  path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local", "share"), "opencode", "opencode.db")
+  path.join(os.homedir(), ".elitza", "home", "data", "elitza.db")
 
 interface EngineSession {
   id: string

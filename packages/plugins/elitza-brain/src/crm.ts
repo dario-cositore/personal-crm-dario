@@ -817,6 +817,18 @@ export function updateClient(id: number, patch: ClientPatch): Client | null {
   return getClient(id)
 }
 
+export function deleteClient(id: number): boolean {
+  const client = getClient(id)
+  if (!client) return false
+  const db = crmDb()
+  for (const table of ["client_interactions", "client_assets", "client_deals", "client_tags"]) {
+    try { db.run(`DELETE FROM ${table} WHERE client_id = ?`, [id]) } catch { /* table may not exist */ }
+  }
+  db.run("DELETE FROM clients WHERE id = ?", [id])
+  try { logAudit("client", id, "deleted", JSON.stringify({ name: client.name })) } catch { /* best effort */ }
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Interactions
 // ---------------------------------------------------------------------------
@@ -888,6 +900,66 @@ export function listAssets(clientId: number): ClientAsset[] {
   return rows<ClientAsset>("SELECT * FROM client_assets WHERE client_id = ? ORDER BY id DESC", [
     clientId,
   ])
+}
+
+// Run the one-time migration on module load (best effort).
+try { migrateEnrichedLeads() } catch { /* ignore */ }
+
+// ---------------------------------------------------------------------------
+// Configured pipeline stages (from ~/.elitza/pipeline-stages.json, else defaults)
+// ---------------------------------------------------------------------------
+export function configuredStageIds(): string[] {
+  try {
+    const fs = require("node:fs")
+    const path = require("node:path")
+    const home = process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")
+    const file = path.join(home, "pipeline-stages.json")
+    if (fs.existsSync(file)) {
+      const stages = JSON.parse(fs.readFileSync(file, "utf8"))
+      if (Array.isArray(stages) && stages.length) return stages.map((s: any) => String(s.id))
+    }
+  } catch { /* fall through */ }
+  return ["scouted", "contacted", "followup_1", "followup_2", "followup_3", "yes", "no", "stale", "diagnose", "proposal", "workbook", "scheduled", "payment", "done"]
+}
+
+export function stageExists(id: string): boolean {
+  return configuredStageIds().includes(id)
+}
+
+export function firstConfiguredStage(): string {
+  const ids = configuredStageIds()
+  return ids.length ? ids[0] : "scouted"
+}
+
+// One-time migration: any client that has an enrichment asset (diagnosis.md /
+// proposal.md) or an enrichment interaction but is still in a "first stage"
+// gets moved to "enriched", so enriched leads are discoverable by status.
+export function migrateEnrichedLeads(): void {
+  try {
+    const clients = rows<{ id: number; status: string }>("SELECT id, status FROM clients", [])
+    for (const c of clients) {
+      const first = firstConfiguredStage()
+      if (c.status !== first && c.status !== "scouted" && c.status !== "new" && c.status !== "" && c.status !== null) continue
+      const assets = rows<{ kind: string; name: string }>(
+        "SELECT kind, name FROM client_assets WHERE client_id = ?",
+        [c.id],
+      )
+      const hasEnrichmentAsset = assets.some(
+        (a) => a.kind === "enrichment" || (a.name ?? "").toLowerCase().includes("diagnosis") || (a.name ?? "").toLowerCase().includes("proposal"),
+      )
+      const interactions = rows<{ kind: string }>(
+        "SELECT kind FROM client_interactions WHERE client_id = ?",
+        [c.id],
+      )
+      const hasEnrichmentInteraction = interactions.some((i) => (i.kind ?? "").toLowerCase().includes("enrich"))
+      if (hasEnrichmentAsset || hasEnrichmentInteraction) {
+        crmDb().run("UPDATE clients SET status = 'enriched', updated_at = ? WHERE id = ?", [
+          new Date().toISOString(),
+          c.id,
+        ])
+      }
+    }
+  } catch { /* best effort */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,7 +1473,8 @@ export function revenueStats(): {
     byMonthMap.set(month, cur)
   }
   const byMonth = [...byMonthMap.entries()].sort().map(([month, v]) => ({ month, value: v.value, count: v.count }))
-  const contacted = clients.filter((c) => c.status !== "scouted").length
+  const firstStage = firstConfiguredStage()
+  const contacted = clients.filter((c) => c.status !== firstStage && c.status !== "scouted").length
   const conversionRate = clients.length ? wonClients.length / clients.length : 0
   const avgDealValue = wonClients.length ? Math.round(wonValue / wonClients.length) : 0
   // MRR estimate: recurring won deals (deal_value treated as one-time; estimate monthly as won/12 if no recurring flag)

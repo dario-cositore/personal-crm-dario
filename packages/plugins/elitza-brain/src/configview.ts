@@ -167,7 +167,7 @@ export function validateConfig(): string[] {
     // Check if opencode console credential exists in the database.
     let hasConsoleCred = false
     try {
-      const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+      const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
       if (fs.existsSync(dbPath)) {
         hasConsoleCred = true
       }

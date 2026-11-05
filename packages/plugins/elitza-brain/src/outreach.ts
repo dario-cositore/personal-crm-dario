@@ -33,7 +33,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { ELITZA_HOME, nowISO } from "./db.js"
-import { crmDb, getClient, logInteraction, updateClient } from "./crm.js"
+import { crmDb, getClient, logInteraction, updateClient, stageExists } from "./crm.js"
 import { slug } from "./pipeline.js"
 
 const DEFAULT_RESEND_URL = "https://api.resend.com/emails"
@@ -306,7 +306,7 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
        WHERE id = ?`,
       [touch, stage, sentAt, nextTouchAt, sentAt, pipelineRow.id],
     )
-    updateClient(pipelineRow.client_id, { status: stage, last_contact: sentAt })
+    updateClient(pipelineRow.client_id, { ...(stageExists(stage) ? { status: stage } : {}), last_contact: sentAt })
     logInteraction(pipelineRow.client_id, {
       kind: touch === 1 ? "first_touch" : `followup_${touch - 1}`,
       direction: "out",
@@ -458,7 +458,7 @@ export function dispose(
      WHERE id = ?`,
     [verdict, now, id],
   )
-  updateClient(pipelineRow.client_id, { status: clientStatus })
+  updateClient(pipelineRow.client_id, { ...(stageExists(clientStatus) ? { status: clientStatus } : {}) })
   logInteraction(pipelineRow.client_id, {
     kind: "disposition",
     direction: "in",
@@ -508,7 +508,7 @@ export function sweepExhausted(now = nowISO()): OutreachRow[] {
       "UPDATE pipeline SET stage = 'stale', approved = 0, queued_touch = 0, updated_at = ? WHERE id = ?",
       [now, pipelineRow.id],
     )
-    updateClient(pipelineRow.client_id, { status: "stale" })
+    updateClient(pipelineRow.client_id, { ...(stageExists("stale") ? { status: "stale" } : {}) })
     logInteraction(pipelineRow.client_id, {
       kind: "cadence_exhausted",
       direction: "note",

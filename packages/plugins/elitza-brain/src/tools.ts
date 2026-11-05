@@ -1471,7 +1471,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
     {
       name: "enrich_client",
       description:
-        "Enrich a CRM client by scouting their own website: fetches the site, extracts contact details, calls MiMo with the diagnosis and proposal playbooks, and writes a one-page diagnosis + fixed-scope proposal (with a recommended price) back into the CRM (notes, interaction, diagnosis.md and proposal.md assets, next action). Use this before drafting a proposal, so you know exactly how to attack. Nothing is sent to the client.",
+        "Enrich a CRM client by scouting their own website: fetches the site, extracts contact details, calls the configured LLM with the diagnosis and proposal playbooks, and writes a one-page diagnosis + fixed-scope proposal (with a recommended price) back into the CRM (notes, interaction, diagnosis.md and proposal.md assets, next action). On success the client is moved to status 'enriched'. Works even without a website by scouting the location and web-searching the name. Use this before drafting a proposal, so you know exactly how to attack. Nothing is sent to the client.",
       input: {
         type: "object",
         properties: {
