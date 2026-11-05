@@ -171,10 +171,12 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
 
   const { url: mimoUrl, key: mimoKey, model: configModel } = providerConfig()
   let model = configModel
+  let variant = ""
   try {
     const { soulGet } = await import("./soul.js")
     const saved = soulGet("chat_model", "")
     if (saved) model = saved
+    variant = soulGet("chat_variant", "")
   } catch {}
   if (!mimoKey) {
     const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
@@ -284,6 +286,7 @@ Do not include anything outside these sections.`
           { role: "user", content: userPrompt },
         ],
         temperature: 0.3,
+        ...(variant ? { reasoning_effort: variant } : {}),
         max_tokens: 1200,
       }),
       signal: AbortSignal.timeout(60000),

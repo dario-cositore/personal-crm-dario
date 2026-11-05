@@ -1298,12 +1298,13 @@ async function loadSettings() {
       + '<div class="field"><span class="label">Role</span><span class="value">'+esc(d.role||'—')+'</span></div>'
       + '<div class="field"><span class="label">Voice</span><span class="value">'+esc(d.voice||'—')+'</span></div>'
       + '<div class="field"><span class="label">Provider</span><span class="value">'+esc(d.provider||'—')+'</span></div>'
-      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">'
       + '<select id="providerSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="changeProvider(this.value)">'
       + '<option value="opencode-go"'+(d.provider==='opencode-go'?' selected':'')+'>OpenCode Go</option>'
       + '<option value="mimo"'+(d.provider==='mimo'?' selected':'')+'>MiMo</option>'
       + '</select>'
       + '<select id="modelSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px;flex:1" onchange="changeModel(this.value)"></select>'
+      + '<select id="variantSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="changeVariant(this.value)"></select>'
       + '</div>'
       + '<div class="field" style="margin-top:8px"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
       + '<div class="field"><span class="label">Maton key</span><span class="value">'+esc(d.maton_key||'—')+'</span></div>'
@@ -1352,6 +1353,7 @@ async function loadSettings() {
       + '</div>';
   loadMatonStatus();
   loadModelOptions(d.provider || 'opencode-go', d.model || 'beam-free');
+  loadVariantOptions(d.model || 'beam-free', d.variant || '');
   } catch(e) { document.getElementById('settingsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
 }
 
@@ -1364,16 +1366,39 @@ async function loadModelOptions(provider, currentModel) {
   } catch(e) { console.error('loadModelOptions', e); }
 }
 
+async function loadVariantOptions(model, currentVariant) {
+  try {
+    const r = await api('/api/settings/variants?model=' + encodeURIComponent(model));
+    const sel = document.getElementById('variantSelect');
+    if (!sel) return;
+    const variants = r.variants || [];
+    if (variants.length === 0) {
+      sel.innerHTML = '<option value="">no variants</option>';
+      sel.disabled = true;
+    } else {
+      sel.disabled = false;
+      sel.innerHTML = variants.map(v => '<option value="'+esc(v)+'"'+(v===currentVariant?' selected':'')+'>'+esc(v)+'</option>').join('');
+    }
+  } catch(e) { console.error('loadVariantOptions', e); }
+}
+
 async function changeProvider(provider) {
   await api('/api/settings/provider', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
   toast('Provider set to ' + provider, 'ok');
   const r = await api('/api/settings');
   loadModelOptions(provider, r.model);
+  loadVariantOptions(r.model, r.variant);
 }
 
 async function changeModel(model) {
   await api('/api/settings/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
   toast('Model set to ' + model, 'ok');
+  loadVariantOptions(model, '');
+}
+
+async function changeVariant(variant) {
+  await api('/api/settings/variant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variant }) });
+  toast('Variant set to ' + variant, 'ok');
 }
 async function setVertical(v) {
   await api('/api/settings/vertical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vertical: v }) });

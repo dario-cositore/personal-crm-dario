@@ -99,7 +99,7 @@ async function proxyChatToEngine(text: string): Promise<string> {
 }
 
 
-async function directChat(text: string, provider?: "mimo" | "opencode-go", modelOverride?: string): Promise<{ thinking: string; reply: string }> {
+async function directChat(text: string, provider?: "mimo" | "opencode-go", modelOverride?: string, variantOverride?: string): Promise<{ thinking: string; reply: string }> {
   // Read provider/model from soul if not explicitly passed.
   if (!provider) {
     try {
@@ -113,6 +113,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   let apiKey = ""
   let baseUrl = ""
   let model = "mimo-v2.6-flash"
+  let variant = ""
   let soul = ""
   let home = process.env.ELITZA_HOME || (process.env.HOME || "") + "/.elitza"
   try {
@@ -144,6 +145,9 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       const { soulGet } = await import("./soul.js")
       const saved = soulGet("chat_model", "")
       if (saved && !modelOverride) model = saved
+      const savedVariant = soulGet("chat_variant", "")
+      if (savedVariant && !variantOverride) variant = savedVariant
+      if (variantOverride) variant = variantOverride
     } catch {}
   } else {
     // Read the opencode console credential from the opencode.db if no API key is set.
@@ -167,6 +171,9 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       const { soulGet } = await import("./soul.js")
       const saved = soulGet("chat_model", "")
       if (saved && !modelOverride) model = saved
+      const savedVariant = soulGet("chat_variant", "")
+      if (savedVariant && !variantOverride) variant = savedVariant
+      if (variantOverride) variant = variantOverride
     } catch {}
   }
   if (!apiKey) return { thinking: "", reply: "No API key configured for " + provider + ". Run `elitza` setup first." }
@@ -195,6 +202,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   for (let iter = 0; iter < 4; iter++) {
     const isLast = iter === 3
     const body: any = { model: model, messages, stream: false }
+    if (variant) body.reasoning_effort = variant
     if (!isLast) body.tools = tools
     const fetchHeaders: Record<string, string> = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey }
     if (provider === "opencode-go") {
@@ -311,6 +319,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           return json({
             provider: soulGet("chat_provider", process.env.ELITZA_CHAT_PROVIDER || "opencode-go"),
             model: soulGet("chat_model", "beam-free"),
+            variant: soulGet("chat_variant", ""),
             mimo_key: soulGet("mimo_key", "not set"),
             maton_key: soulGet("maton_key", "not set"),
             user_name: soulGet("user_name", ""),
@@ -349,13 +358,41 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (model) soulSet("chat_model", model)
           return json({ ok: true, model })
         }
+        if (path === "/api/settings/variant" && req.method === "POST") {
+          const body = await readBody(req)
+          const { soulSet } = await import("./soul.js")
+          const variant = String(body.variant ?? "")
+          soulSet("chat_variant", variant)
+          return json({ ok: true, variant })
+        }
+        if (path === "/api/settings/variants" && req.method === "GET") {
+          const model = url.searchParams.get("model") || ""
+          // Fetch reasoning options from models.dev.
+          let variants: string[] = []
+          try {
+            const res = await fetch("https://models.dev/api.json")
+            const data = await res.json() as any
+            // Find the model in opencode-go provider.
+            const m = data?.["opencode-go"]?.models?.[model]
+            if (m?.reasoning_options) {
+              for (const opt of m.reasoning_options) {
+                if (opt.type === "effort" && Array.isArray(opt.values)) {
+                  variants = opt.values
+                } else if (opt.type === "toggle") {
+                  variants = ["default", "thinking"]
+                }
+              }
+            }
+          } catch { /* ignore */ }
+          return json({ model, variants })
+        }
         if (path === "/api/settings/models" && req.method === "GET") {
           const provider = url.searchParams.get("provider") || "opencode-go"
           if (provider === "mimo") {
             return json({ provider, models: ["mimo-v2.6-flash"] })
           }
           // Fetch opencode-go models from console.
-          let models: string[] = ["beam-free", "deepseek-v4-pro", "gemini-4-argon", "glm-5.3", "gpt-6-luna", "kimi-k3.1-pro", "minimax-m3.1-flash", "qwen3.8-max"]
+          let models: string[] = ["beam-free", "claude-haiku-5-5", "deepseek-v4-pro", "deepseek-v4.1-flash", "gemini-4-argon", "glm-5.2", "glm-5.3", "glm-5.3-flash", "gpt-5.6-luna", "gpt-6-luna", "grok-4.7", "hy3", "hy4", "hy4-preview", "iceman-contributor-free", "kimi-k2.7-code", "kimi-k3", "kimi-k3.1-pro", "longcat-2.0", "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2.6-flash", "mimo-v2.6-pro", "minimax-m3", "minimax-m3.1-flash", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor", "qwen3.7-plus", "qwen3.8-flash", "qwen3.8-max", "step-5-preview"]
           try {
             const Database = (await import("bun:sqlite")).default
             const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
@@ -371,9 +408,12 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
               const res = await fetch("https://opencode.ai/console/api/config", { headers })
               const data = await res.json() as any
               const m = Object.keys(data?.config?.provider?.["opencode-go"]?.models ?? {})
+              console.error("[models] console returned", m.length, "models")
               if (m.length > 0) models = m
+            } else {
+              console.error("[models] no credential row found")
             }
-          } catch { /* use defaults */ }
+          } catch (e) { console.error("[models] error:", String(e)) }
           return json({ provider, models })
         }
         if (path === "/api/settings/backup" && req.method === "POST") {
@@ -913,6 +953,8 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const text = String(body.text ?? body.message ?? "")
           if (!text.trim()) return json({ error: "text required" }, 400)
           const provider = String(body.provider ?? process.env.ELITZA_CHAT_PROVIDER ?? "opencode-go") as "mimo" | "opencode-go"
+          const modelOverride = String(body.model ?? "")
+          const variantOverride = String(body.variant ?? "")
           // Try engine session first
           let reply = ""
           let thinking = ""
@@ -935,7 +977,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           }
           if (!reply || reply === "(no response)") {
             try {
-              const r = await directChat(text, provider)
+              const r = await directChat(text, provider, modelOverride || undefined, variantOverride || undefined)
               reply = r.reply
               thinking = r.thinking
             } catch (e) { reply = "Error: " + String(e); console.error("[crm-chat] directChat error:", String(e)) }
