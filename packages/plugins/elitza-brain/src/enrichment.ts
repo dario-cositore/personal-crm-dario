@@ -169,7 +169,13 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
   const proposalPlaybook = readPlaybook("fixed-scope-proposal")
   const paymentPlaybook = readPlaybook("payment-terms")
 
-  const { url: mimoUrl, key: mimoKey, model } = providerConfig()
+  const { url: mimoUrl, key: mimoKey, model: configModel } = providerConfig()
+  let model = configModel
+  try {
+    const { soulGet } = await import("./soul.js")
+    const saved = soulGet("chat_model", "")
+    if (saved) model = saved
+  } catch {}
   if (!mimoKey) {
     const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
     const keyName = provider === "opencode-go" ? "OPENCODE_API_KEY or opencode console credential" : "XIAOMI_API_KEY"

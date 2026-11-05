@@ -1298,7 +1298,14 @@ async function loadSettings() {
       + '<div class="field"><span class="label">Role</span><span class="value">'+esc(d.role||'—')+'</span></div>'
       + '<div class="field"><span class="label">Voice</span><span class="value">'+esc(d.voice||'—')+'</span></div>'
       + '<div class="field"><span class="label">Provider</span><span class="value">'+esc(d.provider||'—')+'</span></div>'
-      + '<div class="field"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+      + '<select id="providerSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="changeProvider(this.value)">'
+      + '<option value="opencode-go"'+(d.provider==='opencode-go'?' selected':'')+'>OpenCode Go</option>'
+      + '<option value="mimo"'+(d.provider==='mimo'?' selected':'')+'>MiMo</option>'
+      + '</select>'
+      + '<select id="modelSelect" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px;flex:1" onchange="changeModel(this.value)"></select>'
+      + '</div>'
+      + '<div class="field" style="margin-top:8px"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
       + '<div class="field"><span class="label">Maton key</span><span class="value">'+esc(d.maton_key||'—')+'</span></div>'
       + '</div>'
       + '<div class="section-card"><h4>Vertical</h4>'
@@ -1344,7 +1351,29 @@ async function loadSettings() {
       + '<div class="field"><span class="label">CRM port</span><span class="value">'+d.crm_port+'</span></div>'
       + '</div>';
   loadMatonStatus();
+  loadModelOptions(d.provider || 'opencode-go', d.model || 'beam-free');
   } catch(e) { document.getElementById('settingsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
+}
+
+async function loadModelOptions(provider, currentModel) {
+  try {
+    const r = await api('/api/settings/models?provider=' + encodeURIComponent(provider));
+    const sel = document.getElementById('modelSelect');
+    if (!sel) return;
+    sel.innerHTML = (r.models || []).map(m => '<option value="'+esc(m)+'"'+(m===currentModel?' selected':'')+'>'+esc(m)+'</option>').join('');
+  } catch(e) { console.error('loadModelOptions', e); }
+}
+
+async function changeProvider(provider) {
+  await api('/api/settings/provider', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
+  toast('Provider set to ' + provider, 'ok');
+  const r = await api('/api/settings');
+  loadModelOptions(provider, r.model);
+}
+
+async function changeModel(model) {
+  await api('/api/settings/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+  toast('Model set to ' + model, 'ok');
 }
 async function setVertical(v) {
   await api('/api/settings/vertical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vertical: v }) });

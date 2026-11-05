@@ -99,7 +99,16 @@ async function proxyChatToEngine(text: string): Promise<string> {
 }
 
 
-async function directChat(text: string, provider: "mimo" | "opencode-go" = "opencode-go"): Promise<{ thinking: string; reply: string }> {
+async function directChat(text: string, provider?: "mimo" | "opencode-go", modelOverride?: string): Promise<{ thinking: string; reply: string }> {
+  // Read provider/model from soul if not explicitly passed.
+  if (!provider) {
+    try {
+      const { soulGet } = await import("./soul.js")
+      provider = (soulGet("chat_provider", process.env.ELITZA_CHAT_PROVIDER || "opencode-go")) as "mimo" | "opencode-go"
+    } catch {
+      provider = "opencode-go"
+    }
+  }
   // Standalone fallback: call the configured provider directly with SOUL.md as system prompt.
   let apiKey = ""
   let baseUrl = ""
@@ -130,7 +139,12 @@ async function directChat(text: string, provider: "mimo" | "opencode-go" = "open
     apiKey = apiKey || process.env.XIAOMI_API_KEY || ""
     baseUrl = "https://api.xiaomimimo.com/v1"
     if (apiKey.toLowerCase().startsWith("tp-")) baseUrl = "https://token-plan-ams.xiaomimimo.com/v1"
-    model = "mimo-v2.6-flash"
+    model = modelOverride || "mimo-v2.6-flash"
+    try {
+      const { soulGet } = await import("./soul.js")
+      const saved = soulGet("chat_model", "")
+      if (saved && !modelOverride) model = saved
+    } catch {}
   } else {
     // Read the opencode console credential from the opencode.db if no API key is set.
     if (!apiKey) {
@@ -148,7 +162,12 @@ async function directChat(text: string, provider: "mimo" | "opencode-go" = "open
     }
     apiKey = apiKey || process.env.OPENCODE_API_KEY || ""
     baseUrl = "https://opencode.ai/inference/go/openai/v1"
-    model = "beam-free"
+    model = modelOverride || "beam-free"
+    try {
+      const { soulGet } = await import("./soul.js")
+      const saved = soulGet("chat_model", "")
+      if (saved && !modelOverride) model = saved
+    } catch {}
   }
   if (!apiKey) return { thinking: "", reply: "No API key configured for " + provider + ". Run `elitza` setup first." }
   // Expose ALL brain tools to the model so Elitza can touch every aspect of the CRM.
@@ -290,7 +309,8 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           let heartbeatError = ""
           try { heartbeatError = soulGet("heartbeat_last_error", "") } catch {}
           return json({
-            provider: soulGet("provider", "mimo"),
+            provider: soulGet("chat_provider", process.env.ELITZA_CHAT_PROVIDER || "opencode-go"),
+            model: soulGet("chat_model", "beam-free"),
             mimo_key: soulGet("mimo_key", "not set"),
             maton_key: soulGet("maton_key", "not set"),
             user_name: soulGet("user_name", ""),
@@ -311,6 +331,50 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const { setActiveVertical } = await import("./verticals.js")
           const ok = setActiveVertical(String(body.vertical ?? ""))
           return json({ ok })
+        }
+        if (path === "/api/settings/provider" && req.method === "POST") {
+          const body = await readBody(req)
+          const { soulSet } = await import("./soul.js")
+          const provider = String(body.provider ?? "opencode-go")
+          soulSet("chat_provider", provider)
+          // Reset model to default for the new provider.
+          if (provider === "mimo") soulSet("chat_model", "mimo-v2.6-flash")
+          else soulSet("chat_model", "beam-free")
+          return json({ ok: true, provider })
+        }
+        if (path === "/api/settings/model" && req.method === "POST") {
+          const body = await readBody(req)
+          const { soulSet } = await import("./soul.js")
+          const model = String(body.model ?? "")
+          if (model) soulSet("chat_model", model)
+          return json({ ok: true, model })
+        }
+        if (path === "/api/settings/models" && req.method === "GET") {
+          const provider = url.searchParams.get("provider") || "opencode-go"
+          if (provider === "mimo") {
+            return json({ provider, models: ["mimo-v2.6-flash"] })
+          }
+          // Fetch opencode-go models from console.
+          let models: string[] = ["beam-free", "deepseek-v4-pro", "gemini-4-argon", "glm-5.3", "gpt-6-luna", "kimi-k3.1-pro", "minimax-m3.1-flash", "qwen3.8-max"]
+          try {
+            const Database = (await import("bun:sqlite")).default
+            const dbPath = (process.env.HOME || "") + "/.local/share/opencode/opencode.db"
+            const db = new Database(dbPath, { readonly: true })
+            const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%'").get() as any
+            db.close()
+            if (row?.value) {
+              const cred = JSON.parse(row.value)
+              const access = cred.access
+              const orgId = cred.metadata?.orgID
+              const headers: Record<string, string> = { "Authorization": "Bearer " + access }
+              if (orgId) headers["x-opencode-org-id"] = orgId
+              const res = await fetch("https://opencode.ai/console/api/config", { headers })
+              const data = await res.json() as any
+              const m = Object.keys(data?.config?.provider?.["opencode-go"]?.models ?? {})
+              if (m.length > 0) models = m
+            }
+          } catch { /* use defaults */ }
+          return json({ provider, models })
         }
         if (path === "/api/settings/backup" && req.method === "POST") {
           const { execSync } = await import("node:child_process")
@@ -859,7 +923,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 chatSessionId = created.id
               }
               await ctx.session.prompt({ sessionID: chatSessionId, text: { text } } as any)
-              await new Promise((r) => setTimeout(r, 2000))
+              await new Promise((r) => setTimeout(r, 3000))
               const msgs = await ctx.session.context({ sessionID: chatSessionId })
               for (let i = msgs.length - 1; i >= 0; i--) {
                 const m = msgs[i]
@@ -867,14 +931,14 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 reply = (m.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\\n")
                 break
               }
-            } catch (e) { reply = "" }
+            } catch (e) { reply = ""; console.error("[crm-chat] engine session error:", String(e)) }
           }
           if (!reply || reply === "(no response)") {
             try {
               const r = await directChat(text, provider)
               reply = r.reply
               thinking = r.thinking
-            } catch (e) { reply = "Error: " + String(e) }
+            } catch (e) { reply = "Error: " + String(e); console.error("[crm-chat] directChat error:", String(e)) }
           }
           return json({ reply: reply || "(no response)", thinking })
         }
