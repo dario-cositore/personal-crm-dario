@@ -40,7 +40,23 @@ try {
   // No .env — continue with whatever the shell provides.
 }
 
-const STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"]
+const DEFAULT_STAGES = [
+  { id: "scouted", label: "Scouted", color: "#62666d", statusColor: "muted" },
+  { id: "contacted", label: "Contacted", color: "#4ea7fc", statusColor: "info" },
+  { id: "followup_1", label: "Follow-up 1", color: "#4ea7fc", statusColor: "info" },
+  { id: "followup_2", label: "Follow-up 2", color: "#4ea7fc", statusColor: "info" },
+  { id: "followup_3", label: "Follow-up 3", color: "#4ea7fc", statusColor: "info" },
+  { id: "yes", label: "Won", color: "#27a644", statusColor: "ok" },
+  { id: "no", label: "Lost", color: "#eb5757", statusColor: "err" },
+  { id: "stale", label: "Stale", color: "#f2c94c", statusColor: "warn" },
+  { id: "diagnose", label: "Diagnose", color: "#7170ff", statusColor: "accent" },
+  { id: "proposal", label: "Proposal", color: "#7170ff", statusColor: "accent" },
+  { id: "workbook", label: "Workbook", color: "#7170ff", statusColor: "accent" },
+  { id: "scheduled", label: "Scheduled", color: "#f2c94c", statusColor: "warn" },
+  { id: "payment", label: "Payment", color: "#27a644", statusColor: "ok" },
+  { id: "done", label: "Done", color: "#27a644", statusColor: "ok" },
+]
+const STATUSES = DEFAULT_STAGES.map(s => s.id)
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -526,6 +542,62 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const clients = findClients({ status, query, sort, dir, pipeline, limit: perPage, offset })
           const total = countClients({ status, query, pipeline })
           return json({ clients, total, page, per_page: perPage, sort, dir })
+        }
+        // Pipeline stages config
+        if (path === "/api/pipeline/stages" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const filePath = pathMod.join(home, "pipeline-stages.json")
+          let stages: any[]
+          try {
+            stages = JSON.parse(fs.readFileSync(filePath, "utf8"))
+            if (!Array.isArray(stages) || stages.length === 0) stages = DEFAULT_STAGES
+          } catch {
+            stages = DEFAULT_STAGES
+          }
+          // Migrate orphaned clients: move any client whose status is not in the configured stages to the first stage.
+          const validIds = new Set(stages.map((s: any) => s.id))
+          const firstStage = stages[0]?.id
+          if (firstStage) {
+            try {
+              const rows = crmDb().query("SELECT id, status FROM clients").all() as any[]
+              let migrated = 0
+              for (const row of rows) {
+                if (!validIds.has(row.status)) {
+                  crmDb().run("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?", [firstStage, new Date().toISOString(), row.id])
+                  migrated++
+                }
+              }
+            } catch { /* best effort */ }
+          }
+          return json({ stages })
+        }
+        if (path === "/api/pipeline/stages" && req.method === "POST") {
+          const body = await readBody(req)
+          let stages = Array.isArray(body.stages) ? body.stages : []
+          if (stages.length === 0) stages = DEFAULT_STAGES
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const filePath = pathMod.join(home, "pipeline-stages.json")
+          fs.writeFileSync(filePath, JSON.stringify(stages, null, 2), { mode: 0o600 })
+          // Migrate orphaned clients to the first stage.
+          const validIds = new Set(stages.map((s: any) => s.id))
+          const firstStage = stages[0]?.id
+          if (firstStage) {
+            try {
+              const rows = crmDb().query("SELECT id, status FROM clients").all() as any[]
+              for (const row of rows) {
+                if (!validIds.has(row.status)) {
+                  crmDb().run("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?", [firstStage, new Date().toISOString(), row.id])
+                }
+              }
+            } catch { /* best effort */ }
+          }
+          return json({ ok: true, stages })
         }
         if (path === "/api/companies" && req.method === "GET") {
           const q = (url.searchParams.get("q") ?? "").toLowerCase()
