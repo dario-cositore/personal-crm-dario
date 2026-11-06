@@ -33,10 +33,10 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
-const OVERPASS_TIMEOUT_MS = 8_000
+const OVERPASS_TIMEOUT_MS = 5_000
 const GOOGLE_TIMEOUT_MS = 8_000
-const PHOTON_TIMEOUT_MS = 15_000
-const OSM_API_TIMEOUT_MS = 10_000
+const PHOTON_TIMEOUT_MS = 5_000
+const OSM_API_TIMEOUT_MS = 5_000
 const MAX_LIMIT = 20
 const CACHE_TTL_MS = 30 * 60 * 1000
 const USER_AGENT = "Elitza client_scout (https://elitza.life)"
@@ -232,33 +232,44 @@ export async function scoutBusinesses(
   const steps: string[] = []
   const tagSet = new Set(tags.map(([k, v]) => `${k}=${v}`))
 
-  // 1. Photon (primary, stable)
-  steps.push("🔍 Querying Photon (Komoot/OSM) for " + query + " in " + location + "…")
-  let photonAnswered = false
-  try {
-    const photon = await scoutPhoton(location, tags, tagSet, size)
-    if (photon.error) { failures.push(photon.error); steps.push("⚠️ Photon: " + photon.error) }
+  // 1. MioDottore first for medical queries (returns individual practitioners, fast).
+  if (isMedicalQuery(query)) {
+    steps.push("🏥 Trying MioDottore for individual practitioners…")
+    const md = await scoutMioDottore(location, query, size)
+    if (md.error) { failures.push(md.error); steps.push("⚠️ MioDottore: " + md.error) }
     else {
-      photonAnswered = true
-      candidates.push(...photon.candidates)
-      steps.push("✅ Photon returned " + photon.candidates.length + " candidate(s)")
+      candidates.push(...md.businesses.map((business) => ({ business, source: "miodottore" })))
+      steps.push("✅ MioDottore returned " + md.businesses.length + " candidate(s)")
     }
-  } catch (error) {
-    failures.push(`Photon search failed: ${String(error)}`)
-    steps.push("❌ Photon failed: " + String(error))
   }
 
-  // 2. Overpass fallback when Photon is short or failed.
+  // 2. Photon (primary, stable) — only if still short.
   if (mergeDedup(candidates).length < size) {
-    steps.push("📡 Photon short (" + mergeDedup(candidates).length + "/" + size + ") — trying Overpass fallback…")
+    steps.push("🔍 Querying Photon (Komoot/OSM) for " + query + " in " + location + "…")
+    let photonAnswered = false
+    try {
+      const photon = await scoutPhoton(location, tags, tagSet, size)
+      if (photon.error) { failures.push(photon.error); steps.push("⚠️ Photon: " + photon.error) }
+      else {
+        photonAnswered = true
+        candidates.push(...photon.candidates)
+        steps.push("✅ Photon returned " + photon.candidates.length + " candidate(s)")
+      }
+    } catch (error) {
+      failures.push(`Photon search failed: ${String(error)}`)
+      steps.push("❌ Photon failed: " + String(error))
+    }
+  }
+
+  // 3. Overpass fallback when still short.
+  if (mergeDedup(candidates).length < size) {
+    steps.push("📡 Trying Overpass fallback…")
     const osm = await scoutOsm(location, tags)
     if (osm.error) { failures.push(osm.error); steps.push("⚠️ Overpass: " + osm.error) }
     else {
       candidates.push(...osm.businesses.map((business) => ({ business, source: "osm" })))
       steps.push("✅ Overpass returned " + osm.businesses.length + " candidate(s)")
     }
-  } else {
-    steps.push("✅ Photon sufficient — skipping Overpass")
   }
 
   // 3. Google Places fallback when still short and a key is present
@@ -302,6 +313,75 @@ export async function scoutBusinesses(
 /** True when the operator's own key is in the environment. The value never leaves it. */
 export function scoutKeyPresent(): boolean {
   return Boolean(process.env.GOOGLE_MAPS_API_KEY?.trim())
+}
+
+function isMedicalQuery(query: string): boolean {
+  const q = normalizeText(query)
+  return /medic|doctor|clinic|dentist|farmac|veterinar|physio|psycholog|optician|ottic/i.test(q)
+}
+
+// ---------------------------------------------------------------------------
+// MioDottore (individual doctors/clinics in Italy) — scrapes individual profiles.
+// ---------------------------------------------------------------------------
+const MIODOTTORE_SPECIALTY: Record<string, string> = {
+  "medico": "medico-di-base",
+  "medici": "medico-di-base",
+  "doctor": "medico-di-base",
+  "doctors": "medico-di-base",
+  "clinica": "medico-di-base",
+  "cliniche": "medico-di-base",
+  "clinic": "medico-di-base",
+  "clinics": "medico-di-base",
+  "dentista": "dentista",
+  "dentisti": "dentista",
+  "dentist": "dentista",
+  "farmacia": "farmacia",
+  "farmacie": "farmacia",
+  "pharmacy": "farmacia",
+}
+
+async function scoutMioDottore(location: string, query: string, limit: number): Promise<{ businesses: ScoutedBusiness[]; error?: string }> {
+  const size = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit)))
+  const slug = MIODOTTORE_SPECIALTY[normalizeText(query).split(" ")[0]] || "medico-di-base"
+  // Extract city: first comma-separated token, lowercased, spaces -> hyphens
+  const city = location.split(",")[0].trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
+  if (!city) return { businesses: [], error: "no city in location" }
+  const url = `https://www.miodottore.it/${slug}/${city}`
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+    })
+    if (!res.ok) return { businesses: [], error: `MioDottore HTTP ${res.status}` }
+    const html = await res.text()
+    const businesses: ScoutedBusiness[] = []
+    const seen = new Set<string>()
+    // Doctor cards: h2/h3 with name + link to profile
+    const blocks = [...html.matchAll(/<h[23][^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    for (const m of blocks) {
+      if (businesses.length >= size) break
+      const href = m[1]
+      const name = stripTags(m[2]).trim()
+      if (!name || name.length < 4 || name.length > 80) continue
+      if (seen.has(name)) continue
+      seen.add(name)
+      const profileUrl = /^https?:\/\//i.test(href) ? href : `https://www.miodottore.it${href.startsWith("/") ? "" : "/"}${href}`
+      businesses.push({
+        name,
+        address: location,
+        phone: null,
+        website: profileUrl,
+        rating: null,
+        rating_count: null,
+        category: query,
+        google_maps: null,
+      })
+    }
+    if (!businesses.length) return { businesses: [], error: "no practitioners parsed" }
+    return { businesses }
+  } catch (e) {
+    return { businesses: [], error: `MioDottore failed: ${String(e)}` }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -726,7 +806,8 @@ function dedupKeys(business: ScoutedBusiness): string[] {
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
-    .split("/")[0]
+    .replace(/[?#].*$/, "")
+    .replace(/\/$/, "")
   const name = normalizeText(business.name)
   const address = normalizeText(business.address)
   return [
