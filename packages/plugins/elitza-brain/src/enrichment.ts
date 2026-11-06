@@ -26,12 +26,17 @@ import { pullRecommendedWorksheet, recommendWorksheets } from "./worksheets.js"
 const PLAYBOOK_DIR = path.join(ELITZA_HOME, "brain", "procedural")
 const SUBPAGES = ["/", "/about", "/about-us", "/chi-siamo", "/services", "/servizi", "/contact", "/contatti", "/contact-us"]
 
-function readPlaybook(name: string): string {
-  try {
-    return fs.readFileSync(path.join(PLAYBOOK_DIR, `${name}.md`), "utf8")
-  } catch {
-    return ""
+function readPlaybook(name: string, lang?: string): string {
+  const l = (lang || "en").toLowerCase()
+  const candidates = [
+    path.join(PLAYBOOK_DIR, l, `${name}.md`),
+    path.join(PLAYBOOK_DIR, `${name}.${l}.md`),
+    path.join(PLAYBOOK_DIR, `${name}.md`),
+  ]
+  for (const c of candidates) {
+    try { return fs.readFileSync(c, "utf8") } catch { /* try next */ }
   }
+  return ""
 }
 
 function stripHtml(html: string): string {
@@ -273,9 +278,10 @@ export async function enrichClient(clientId: number): Promise<EnrichmentResult> 
   } catch { /* best effort */ }
 
   // Read playbooks.
-  const diagnosisPlaybook = readPlaybook("ai-enablement-diagnosis")
-  const proposalPlaybook = readPlaybook("fixed-scope-proposal")
-  const paymentPlaybook = readPlaybook("payment-terms")
+  const lang = (client as any).language || "en"
+  const diagnosisPlaybook = readPlaybook("ai-enablement-diagnosis", lang)
+  const proposalPlaybook = readPlaybook("fixed-scope-proposal", lang)
+  const paymentPlaybook = readPlaybook("payment-terms", lang)
 
   const { url: mimoUrl, key: mimoKey, model: configModel } = await providerConfig()
   let model = configModel

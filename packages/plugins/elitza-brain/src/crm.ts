@@ -92,6 +92,7 @@ const SCHEMA = `
       tech_stack TEXT,
       revenue_estimate TEXT,
       employee_count TEXT,
+      language TEXT NOT NULL DEFAULT 'en',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
   );
@@ -289,6 +290,7 @@ function migrate(db: Database): void {
     { name: "tech_stack", type: "TEXT" },
     { name: "revenue_estimate", type: "TEXT" },
     { name: "employee_count", type: "TEXT" },
+    { name: "language", type: "TEXT" },
   ]
   for (const col of newCols) {
     if (!clientCols.some((c) => c.name === col.name)) {
@@ -348,6 +350,7 @@ export interface Client {
   tech_stack: string | null
   revenue_estimate: string | null
   employee_count: string | null
+  language: string
   created_at: string
   updated_at: string
 }
@@ -384,6 +387,7 @@ export interface ClientInput {
   tech_stack?: string
   revenue_estimate?: string
   employee_count?: string
+  language?: string
 }
 
 export interface Interaction {
@@ -503,6 +507,7 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
     "tech_stack",
     "revenue_estimate",
     "employee_count",
+    "language",
     "created_at",
     "updated_at",
   ]
@@ -541,6 +546,7 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
         input.tech_stack ?? null,
         input.revenue_estimate ?? null,
         input.employee_count ?? null,
+        input.language ?? "en",
         now,
         now,
       ],
@@ -792,6 +798,7 @@ const UPDATABLE = [
   "tech_stack",
   "revenue_estimate",
   "employee_count",
+  "language",
 ] as const
 
 export type ClientPatch = Partial<Record<(typeof UPDATABLE)[number], string | number | null>>

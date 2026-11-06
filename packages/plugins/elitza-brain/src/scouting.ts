@@ -88,6 +88,32 @@ const CATEGORY_TAGS = [
     match: ["farmacia", "farmacie", "pharmacy", "pharmacies"],
     tags: [["amenity", "pharmacy"]],
   },
+  {
+    match: ["medico", "medici", "doctor", "doctors", "physician", "physicians", "clinica", "cliniche", "clinic", "clinics", "medical", "medico privato", "private clinic"],
+    tags: [
+      ["amenity", "doctors"],
+      ["amenity", "clinic"],
+      ["healthcare", "doctor"],
+      ["healthcare", "clinic"],
+      ["healthcare", "centre"],
+    ],
+  },
+  {
+    match: ["veterinario", "veterinari", "veterinary", "vet"],
+    tags: [["amenity", "veterinary"]],
+  },
+  {
+    match: ["ottico", "ottici", "optician", "opticians", "optometrist"],
+    tags: [["shop", "optician"]],
+  },
+  {
+    match: ["fisioterapista", "fisioterapisti", "physiotherapist", "physio", "physiotherapy"],
+    tags: [["healthcare", "physiotherapist"]],
+  },
+  {
+    match: ["psicologo", "psicologi", "psychologist", "psychologists", "psychotherapist"],
+    tags: [["healthcare", "psychotherapist"], ["office", "psychologist"]],
+  },
 ]
 
 export interface ScoutedBusiness {
@@ -188,7 +214,7 @@ export async function scoutBusinesses(
       businesses: [],
       meta: { sources_used: [] },
       steps: ["❌ No OSM mapping for query: " + query],
-      error: `no OpenStreetMap mapping for "${query}" (known: idraulici, parrucchieri, dentisti, avvocati, commercialisti, ristoranti, bar, autofficine, farmacie)`,
+      error: `no OpenStreetMap mapping for "${query}" (known: idraulici, parrucchieri, dentisti, avvocati, commercialisti, ristoranti, bar, autofficine, farmacie, medici/cliniche, veterinari, ottici, fisioterapisti, psicologi)`,
     }
   }
 
@@ -247,6 +273,17 @@ export async function scoutBusinesses(
     }
   }
 
+  // 4. Web search fallback (Bing) when OSM/Places are unreachable — best-effort.
+  if (mergeDedup(candidates).length < size) {
+    steps.push("🌐 OSM/Places short or unreachable — trying web search (Bing)…")
+    const web = await scoutWebSearch(location, query, size)
+    if (web.error) { failures.push(web.error); steps.push("⚠️ Web search: " + web.error) }
+    else {
+      candidates.push(...web.businesses.map((business) => ({ business, source: "web_search" })))
+      steps.push("✅ Web search returned " + web.businesses.length + " candidate(s)")
+    }
+  }
+
   const merged = mergeDedup(candidates).slice(0, size)
   let result: ScoutResult
   if (!merged.length && failures.length) {
@@ -265,6 +302,61 @@ export async function scoutBusinesses(
 /** True when the operator's own key is in the environment. The value never leaves it. */
 export function scoutKeyPresent(): boolean {
   return Boolean(process.env.GOOGLE_MAPS_API_KEY?.trim())
+}
+
+// ---------------------------------------------------------------------------
+// Web search fallback (Bing) — best-effort when OSM/Places are unreachable.
+// ---------------------------------------------------------------------------
+async function scoutWebSearch(location: string, query: string, limit: number): Promise<{ businesses: ScoutedBusiness[]; error?: string }> {
+  const size = Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit)))
+  const q = encodeURIComponent(`${query} ${location}`)
+  const url = `https://www.bing.com/search?q=${q}`
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+    })
+    if (!res.ok) return { businesses: [], error: `Bing HTTP ${res.status}` }
+    const html = await res.text()
+    const businesses: ScoutedBusiness[] = []
+    const seen = new Set<string>()
+    // Bing result blocks
+    const blocks = [...html.matchAll(/<li class="b_algo"[^>]*>([\s\S]*?)<\/li>/gi)]
+    for (const m of blocks) {
+      if (businesses.length >= size) break
+      const block = m[1]
+      const tm = block.match(/<h2[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+      const title = tm ? stripTags(tm[2]) : ""
+      const href = tm ? tm[1] : ""
+      const sm = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i)
+      const snippet = sm ? stripTags(sm[1]) : ""
+      if (!title || title.length < 3) continue
+      if (seen.has(title)) continue
+      seen.add(title)
+      // Try to extract a phone from snippet
+      const phoneMatch = snippet.match(/(?:\+?\d[\d\s().-]{6,}\d)/)
+      const phone = phoneMatch ? phoneMatch[0].trim() : null
+      const website = /^https?:\/\//i.test(href) && !/bing\.com/i.test(href) ? href : null
+      businesses.push({
+        name: title,
+        address: snippet.slice(0, 120) || location,
+        phone,
+        website,
+        rating: null,
+        rating_count: null,
+        category: query,
+        google_maps: null,
+      })
+    }
+    if (!businesses.length) return { businesses: [], error: "no results parsed from Bing" }
+    return { businesses }
+  } catch (e) {
+    return { businesses: [], error: `Bing search failed: ${String(e)}` }
+  }
+}
+
+function stripTags(s: string): string {
+  return s.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim()
 }
 
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i

@@ -971,6 +971,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             linkedin: body.linkedin, twitter: body.twitter, facebook: body.facebook, instagram: body.instagram,
             notes: body.notes, deal_value: body.deal_value, source: body.source,
             next_action: body.next_action, next_action_at: body.next_action_at,
+            language: body.language,
           })
           return json({ client, created })
         }
@@ -1004,7 +1005,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const body = await readBody(req)
           const id = Number(body.id)
           const patch: any = {}
-          for (const k of ["name","vertical","status","score","address","phone","website","email","linkedin","twitter","facebook","instagram","notes","deal_value","next_action","next_action_at","last_contact","source"]) {
+          for (const k of ["name","vertical","status","score","address","phone","website","email","linkedin","twitter","facebook","instagram","notes","deal_value","next_action","next_action_at","last_contact","source","language"]) {
             if (k in body) patch[k] = body[k]
           }
           const client = updateClient(id, patch)

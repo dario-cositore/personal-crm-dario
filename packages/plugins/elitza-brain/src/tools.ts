@@ -464,6 +464,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               twitter: { type: "string", description: "X/Twitter profile URL." },
               facebook: { type: "string", description: "Facebook page URL." },
               instagram: { type: "string", description: "Instagram profile URL." },
+              language: { type: "string", description: "Client document language: 'en' or 'it'. Controls which playbooks/documents are pulled." },
               notes: { type: "string" },
               deal_value: { type: "integer", description: "Deal value in whole euros." },
               next_action: { type: "string", description: "What has to happen next with this client." },
@@ -521,6 +522,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 tech_stack: op.tech_stack !== undefined ? String(op.tech_stack) : undefined,
                 revenue_estimate: op.revenue_estimate !== undefined ? String(op.revenue_estimate) : undefined,
                 employee_count: op.employee_count !== undefined ? String(op.employee_count) : undefined,
+                language: op.language !== undefined ? String(op.language) : undefined,
               })
               return {
                 content: `${created ? "Created" : "Already in the CRM"} ${client.id}: ${client.name} [${client.status}]`,
@@ -568,6 +570,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 "twitter",
                 "facebook",
                 "instagram",
+                "language",
               ] as const) {
                 if (key in op) {
                   patch[key] =
