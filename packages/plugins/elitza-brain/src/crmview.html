@@ -1975,6 +1975,10 @@ async function saveSocial(id){
   toast('Social links saved', 'ok');
   await openDetail(id);
 }
+async function saveLanguage(id, lang) {
+  try { await api('/api/clients/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, language: lang }) }); toast('Language set to ' + lang.toUpperCase(), 'ok'); }
+  catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
 
 let boardPage = 1;
 function boardPageSizeVal() { return Number(document.getElementById('boardPageSize')?.value || 20); }
@@ -2103,6 +2107,7 @@ async function openDetail(id) {
     + '<div class="field"><span class="label">Website</span><span class="value">'+webLink(c.website)+'</span></div>'
     + '<div class="field"><span class="label">Email</span><span class="value">'+mailLink(c.email)+'</span></div>'
     + '<div class="field"><span class="label">Phone</span><span class="value mono">'+telLink(c.phone)+'</span></div>'
+    + '<div class="field"><span class="label">Language</span><span class="value"><select id="langSelect" onchange="saveLanguage('+c.id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:12px"><option value="en"'+(c.language==='en'?' selected':'')+'>EN</option><option value="it"'+(c.language==='it'?' selected':'')+'>IT</option></select></span></div>'
     + '</div>'
     + '<div class="section-card"><h4>Social</h4>'
     + '<div class="social-chips" id="socialChips">'+socialChips(c)+'</div>'
