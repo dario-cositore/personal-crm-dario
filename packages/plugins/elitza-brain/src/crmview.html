@@ -15,6 +15,36 @@
       document.documentElement.setAttribute('data-theme', t);
     } catch (e) {}
   })();
+
+
+// ---- Foldable nav sections ----
+function toggleNavSection(sec) {
+  const key = 'navsec_' + (sec.textContent || '').trim();
+  const collapsed = !sec.classList.contains('collapsed');
+  sec.classList.toggle('collapsed', collapsed);
+  let el = sec.nextElementSibling;
+  while (el && !el.classList.contains('nav-section') && !el.classList.contains('sidebar-footer')) {
+    el.style.display = collapsed ? 'none' : '';
+    el = el.nextElementSibling;
+  }
+  try { localStorage.setItem(key, collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+}
+function restoreFoldableNav() {
+  document.querySelectorAll('.nav-section').forEach(sec => {
+    const key = 'navsec_' + (sec.textContent || '').trim();
+    if (localStorage.getItem(key) === 'collapsed') {
+      sec.classList.add('collapsed');
+      let el = sec.nextElementSibling;
+      while (el && !el.classList.contains('nav-section') && !el.classList.contains('sidebar-footer')) {
+        el.style.display = 'none';
+        el = el.nextElementSibling;
+      }
+    }
+  });
+}
+
+window.addEventListener('DOMContentLoaded', restoreFoldableNav);
+setTimeout(restoreFoldableNav, 100);
 </script>
 <style>
   :root {
@@ -145,7 +175,11 @@
   .nav-section {
     font-size: 10px; color: var(--text-muted); text-transform: uppercase;
     letter-spacing: 0.8px; padding: 12px 8px 4px; font-weight: 600;
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: space-between;
   }
+  .nav-section::after { content: '▾'; font-size: 10px; opacity: 0.6; }
+  .nav-section.collapsed::after { content: '▸'; }
   .nav-item {
     display: flex; align-items: center; gap: 9px;
     padding: 6px 9px;
@@ -672,7 +706,7 @@
         <div class="tag">the house</div>
       </div>
     </div>
-    <div class="nav-section">Search</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Search</div>
     <button class="nav-item" onclick="openCmdk()" style="justify-content:space-between">
       <span style="display:flex;align-items:center;gap:9px">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -680,7 +714,7 @@
       </span>
       <span style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">⌘K</span>
     </button>
-    <div class="nav-section">Navigation</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Navigation</div>
     <button class="nav-item active" onclick="showView('board', this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
       Pipeline
@@ -699,7 +733,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       Scout
     </button>
-    <div class="nav-section">Records</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Records</div>
     <button class="nav-item" onclick="showView('people', this); loadPeople()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
       People
@@ -720,28 +754,41 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       Tasks
     </button>
-    <div class="nav-section">Communication</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Communication</div>
     <button class="nav-item" onclick="showView('mail', this); loadMail()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
       Mail
       <span class="nav-badge" id="mailBadge" style="display:none">0</span>
     </button>
-    <div class="nav-section">My Products</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">My Products</div>
     <button class="nav-item" onclick="showView('products', this); loadProducts()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
       Products
     </button>
-    <div class="nav-section">Lists</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Marketing</div>
+    <button class="nav-item" onclick="showView('mktEmails', this); loadMktEmails()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      Email Campaigns
+    </button>
+    <button class="nav-item" onclick="showView('mktAds', this); loadMktAds()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Ads
+    </button>
+    <button class="nav-item" onclick="showView('mktContent', this); loadMktContent()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Content Calendar
+    </button>
+    <div class="nav-section" onclick="toggleNavSection(this)">Lists</div>
     <button class="nav-item" onclick="showView('lists', this); loadLists()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
       Lists
     </button>
-    <div class="nav-section">Chats</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">Chats</div>
     <button class="nav-item" onclick="showView('chat', this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       Ask Elitza
     </button>
-    <div class="nav-section">System</div>
+    <div class="nav-section" onclick="toggleNavSection(this)">System</div>
     <button class="nav-item" onclick="showView('setup', this); loadSetupStatus()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
       Setup
@@ -965,6 +1012,150 @@
             <div id="pdStrategyStatus" style="color:var(--text-muted);font-size:12px;margin-bottom:8px"></div>
             <pre id="pdStrategy" style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.6;background:var(--bg-elevated);padding:12px;border-radius:var(--radius-md);border:1px solid var(--border);max-height:70vh;overflow:auto"></pre>
           </div>
+        </div>
+      </div>
+      <div id="mktEmails" class="view">
+        <div class="page-header">
+          <h1>Email Campaigns</h1>
+          <p>Marketing email campaigns and broadcasts.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" onclick="openMktEmailForm()">+ New campaign</button>
+          <select id="mktEmailStatusFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktEmails()">
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="completed">Completed</option>
+          </select>
+          <span id="mktEmailsCounter" style="color:var(--text-muted);font-size:13px"></span>
+        </div>
+        <div id="mktEmailForm" style="display:none;margin-bottom:16px" class="section-card">
+          <h4 id="mktEmailFormTitle">New campaign</h4>
+          <input type="hidden" id="mktEmailId" value="">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>Name<input id="mktEmailName" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Type<select id="mktEmailType" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="broadcast">Broadcast</option><option value="sequence">Sequence</option><option value="drip">Drip</option></select></label>
+            <label>Status<select id="mktEmailStatus" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option></select></label>
+            <label>Audience<input id="mktEmailAudience" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Subject<input id="mktEmailSubject" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Body<textarea id="mktEmailBody" rows="4" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+            <label>Scheduled at<input id="mktEmailScheduled" type="text" placeholder="YYYY-MM-DD HH:MM" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Notes<textarea id="mktEmailNotes" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm" onclick="saveMktEmail()">Save</button>
+            <button class="btn sm ghost" onclick="closeMktEmailForm()">Cancel</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table class="scout-table" id="mktEmailsTable" style="width:100%">
+            <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Audience</th><th>Sent</th><th>Opens</th><th>Clicks</th><th></th></tr></thead>
+            <tbody id="mktEmailsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="mktAds" class="view">
+        <div class="page-header">
+          <h1>Ads</h1>
+          <p>Ad campaigns across platforms.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" onclick="openMktAdForm()">+ New ad</button>
+          <select id="mktAdPlatformFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktAds()">
+            <option value="">All platforms</option>
+            <option value="meta">Meta</option>
+            <option value="google">Google</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="twitter">Twitter/X</option>
+            <option value="tiktok">TikTok</option>
+          </select>
+          <select id="mktAdStatusFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktAds()">
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="ended">Ended</option>
+          </select>
+          <span id="mktAdsCounter" style="color:var(--text-muted);font-size:13px"></span>
+        </div>
+        <div id="mktAdForm" style="display:none;margin-bottom:16px" class="section-card">
+          <h4 id="mktAdFormTitle">New ad</h4>
+          <input type="hidden" id="mktAdId" value="">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>Name<input id="mktAdName" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Platform<select id="mktAdPlatform" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="meta">Meta</option><option value="google">Google</option><option value="linkedin">LinkedIn</option><option value="twitter">Twitter/X</option><option value="tiktok">TikTok</option></select></label>
+            <label>Status<select id="mktAdStatus" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="ended">Ended</option></select></label>
+            <label>Budget<input id="mktAdBudget" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Currency<input id="mktAdCurrency" type="text" value="USD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Spend<input id="mktAdSpend" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Impressions<input id="mktAdImpressions" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Clicks<input id="mktAdClicks" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Conversions<input id="mktAdConversions" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Start date<input id="mktAdStart" type="text" placeholder="YYYY-MM-DD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>End date<input id="mktAdEnd" type="text" placeholder="YYYY-MM-DD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Notes<textarea id="mktAdNotes" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm" onclick="saveMktAd()">Save</button>
+            <button class="btn sm ghost" onclick="closeMktAdForm()">Cancel</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table class="scout-table" id="mktAdsTable" style="width:100%">
+            <thead><tr><th>Name</th><th>Platform</th><th>Status</th><th>Budget</th><th>Spend</th><th>Impr.</th><th>Clicks</th><th>Conv.</th><th></th></tr></thead>
+            <tbody id="mktAdsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="mktContent" class="view">
+        <div class="page-header">
+          <h1>Content Calendar</h1>
+          <p>Scheduled content across platforms.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" onclick="openMktContentForm()">+ New item</button>
+          <select id="mktContentStatusFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktContent()">
+            <option value="">All statuses</option>
+            <option value="idea">Idea</option>
+            <option value="draft">Draft</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="published">Published</option>
+          </select>
+          <select id="mktContentPlatformFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktContent()">
+            <option value="">All platforms</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="twitter">Twitter/X</option>
+            <option value="blog">Blog</option>
+            <option value="newsletter">Newsletter</option>
+            <option value="youtube">YouTube</option>
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+          </select>
+          <span id="mktContentCounter" style="color:var(--text-muted);font-size:13px"></span>
+        </div>
+        <div id="mktContentForm" style="display:none;margin-bottom:16px" class="section-card">
+          <h4 id="mktContentFormTitle">New content</h4>
+          <input type="hidden" id="mktContentId" value="">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label style="grid-column:1/-1">Title<input id="mktContentTitle" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Platform<select id="mktContentPlatform" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="linkedin">LinkedIn</option><option value="twitter">Twitter/X</option><option value="blog">Blog</option><option value="newsletter">Newsletter</option><option value="youtube">YouTube</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select></label>
+            <label>Status<select id="mktContentStatus" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="idea">Idea</option><option value="draft">Draft</option><option value="scheduled">Scheduled</option><option value="published">Published</option></select></label>
+            <label>Scheduled date<input id="mktContentScheduled" type="text" placeholder="YYYY-MM-DD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Published URL<input id="mktContentUrl" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Content<textarea id="mktContentBody" rows="4" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+            <label style="grid-column:1/-1">Notes<textarea id="mktContentNotes" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm" onclick="saveMktContent()">Save</button>
+            <button class="btn sm ghost" onclick="closeMktContentForm()">Cancel</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table class="scout-table" id="mktContentTable" style="width:100%">
+            <thead><tr><th>Title</th><th>Platform</th><th>Status</th><th>Scheduled</th><th>URL</th><th></th></tr></thead>
+            <tbody id="mktContentTableBody"></tbody>
+          </table>
         </div>
       </div>
       <div id="tableview" class="view">
@@ -1288,7 +1479,7 @@ function showView(name, el) {
     target = Array.from(document.querySelectorAll('.nav-item')).find(b => (b.getAttribute('onclick')||'').indexOf("'"+name+"'") !== -1);
   }
   if (target) target.classList.add('active');
-  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],products:['My Products','What you sell — the expert stack the agent knows'],productdetail:['Product Profile','Product details and system strategy'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator'],mail:['Mail','Email inbox, sent, drafts and trash']};
+  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],products:['My Products','What you sell — the expert stack the agent knows'],productdetail:['Product Profile','Product details and system strategy'],mktEmails:['Email Campaigns','Marketing email campaigns'],mktAds:['Ads','Ad campaigns'],mktContent:['Content Calendar','Scheduled content'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator'],mail:['Mail','Email inbox, sent, drafts and trash']};
   if (titles[name]) { document.getElementById('topTitle').textContent = titles[name][0]; document.getElementById('topSubtitle').textContent = titles[name][1]; }
 }
 
@@ -1582,6 +1773,198 @@ async function deleteProduct(id) {
     toast('Deleted', 'ok');
     await loadProducts();
   } catch(e) { toast('Delete failed: ' + e, 'err'); }
+}
+
+// ===== Marketing: Email Campaigns =====
+async function loadMktEmails() {
+  const status = document.getElementById('mktEmailStatusFilter')?.value || '';
+  const params = new URLSearchParams(); if (status) params.set('status', status);
+  try {
+    const data = await api('/api/mkt/email-campaigns' + (params.toString() ? '?' + params.toString() : ''));
+    const items = data.campaigns || [];
+    const tbody = document.getElementById('mktEmailsTableBody');
+    tbody.innerHTML = items.map(c =>
+      '<tr><td>'+esc(c.name)+'</td><td>'+esc(c.type)+'</td><td><span class="pill">'+esc(c.status)+'</span></td>'+
+      '<td>'+esc(c.audience||'—')+'</td><td>'+c.sent_count+'</td><td>'+c.open_count+'</td><td>'+c.click_count+'</td>'+
+      '<td style="white-space:nowrap"><button class="btn ghost sm" onclick="editMktEmail('+c.id+')">Edit</button> <button class="btn ghost sm" onclick="deleteMktEmail('+c.id+')">Del</button></td></tr>').join('');
+    if (!items.length) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted)">No campaigns yet.</td></tr>';
+    const counter = document.getElementById('mktEmailsCounter'); if (counter) counter.textContent = items.length + ' campaign(s)';
+  } catch(e) { document.getElementById('mktEmailsTableBody').innerHTML = '<tr><td colspan="8">Error: '+esc(String(e))+'</td></tr>'; }
+}
+function openMktEmailForm(c) {
+  document.getElementById('mktEmailForm').style.display = 'block';
+  document.getElementById('mktEmailFormTitle').textContent = c ? 'Edit campaign' : 'New campaign';
+  document.getElementById('mktEmailId').value = c ? c.id : '';
+  document.getElementById('mktEmailName').value = c ? (c.name||'') : '';
+  document.getElementById('mktEmailType').value = c ? (c.type||'broadcast') : 'broadcast';
+  document.getElementById('mktEmailStatus').value = c ? (c.status||'draft') : 'draft';
+  document.getElementById('mktEmailAudience').value = c ? (c.audience||'') : '';
+  document.getElementById('mktEmailSubject').value = c ? (c.subject||'') : '';
+  document.getElementById('mktEmailBody').value = c ? (c.body||'') : '';
+  document.getElementById('mktEmailScheduled').value = c ? (c.scheduled_at||'') : '';
+  document.getElementById('mktEmailNotes').value = c ? (c.notes||'') : '';
+}
+function closeMktEmailForm() { document.getElementById('mktEmailForm').style.display = 'none'; }
+async function editMktEmail(id) {
+  try { const data = await api('/api/mkt/email-campaigns/' + id); openMktEmailForm(data.campaign); }
+  catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+async function saveMktEmail() {
+  const id = document.getElementById('mktEmailId').value;
+  const body = {
+    name: document.getElementById('mktEmailName').value.trim(),
+    type: document.getElementById('mktEmailType').value,
+    status: document.getElementById('mktEmailStatus').value,
+    audience: document.getElementById('mktEmailAudience').value.trim() || null,
+    subject: document.getElementById('mktEmailSubject').value.trim() || null,
+    body: document.getElementById('mktEmailBody').value.trim() || null,
+    scheduled_at: document.getElementById('mktEmailScheduled').value.trim() || null,
+    notes: document.getElementById('mktEmailNotes').value.trim() || null,
+  };
+  if (!body.name) { toast('Name required', 'err'); return; }
+  try {
+    if (id) await api('/api/mkt/email-campaigns/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    else await api('/api/mkt/email-campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Saved', 'ok'); closeMktEmailForm(); await loadMktEmails();
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+async function deleteMktEmail(id) {
+  if (!confirm('Delete this campaign?')) return;
+  try { await api('/api/mkt/email-campaigns/' + id, { method:'DELETE' }); toast('Deleted','ok'); await loadMktEmails(); }
+  catch(e) { toast('Delete failed: ' + e, 'err'); }
+}
+
+// ===== Marketing: Ads =====
+async function loadMktAds() {
+  const platform = document.getElementById('mktAdPlatformFilter')?.value || '';
+  const status = document.getElementById('mktAdStatusFilter')?.value || '';
+  const params = new URLSearchParams(); if (platform) params.set('platform', platform); if (status) params.set('status', status);
+  try {
+    const data = await api('/api/mkt/ads' + (params.toString() ? '?' + params.toString() : ''));
+    const items = data.ads || [];
+    const tbody = document.getElementById('mktAdsTableBody');
+    tbody.innerHTML = items.map(a =>
+      '<tr><td>'+esc(a.name)+'</td><td>'+esc(a.platform)+'</td><td><span class="pill">'+esc(a.status)+'</span></td>'+
+      '<td>'+(a.budget!=null ? a.currency+' '+a.budget : '—')+'</td><td>'+a.spend+'</td><td>'+a.impressions+'</td><td>'+a.clicks+'</td><td>'+a.conversions+'</td>'+
+      '<td style="white-space:nowrap"><button class="btn ghost sm" onclick="editMktAd('+a.id+')">Edit</button> <button class="btn ghost sm" onclick="deleteMktAd('+a.id+')">Del</button></td></tr>').join('');
+    if (!items.length) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted)">No ads yet.</td></tr>';
+    const counter = document.getElementById('mktAdsCounter'); if (counter) counter.textContent = items.length + ' ad(s)';
+  } catch(e) { document.getElementById('mktAdsTableBody').innerHTML = '<tr><td colspan="9">Error: '+esc(String(e))+'</td></tr>'; }
+}
+function openMktAdForm(a) {
+  document.getElementById('mktAdForm').style.display = 'block';
+  document.getElementById('mktAdFormTitle').textContent = a ? 'Edit ad' : 'New ad';
+  document.getElementById('mktAdId').value = a ? a.id : '';
+  document.getElementById('mktAdName').value = a ? (a.name||'') : '';
+  document.getElementById('mktAdPlatform').value = a ? (a.platform||'meta') : 'meta';
+  document.getElementById('mktAdStatus').value = a ? (a.status||'draft') : 'draft';
+  document.getElementById('mktAdBudget').value = a && a.budget!=null ? a.budget : '';
+  document.getElementById('mktAdCurrency').value = a ? (a.currency||'USD') : 'USD';
+  document.getElementById('mktAdSpend').value = a ? a.spend : 0;
+  document.getElementById('mktAdImpressions').value = a ? a.impressions : 0;
+  document.getElementById('mktAdClicks').value = a ? a.clicks : 0;
+  document.getElementById('mktAdConversions').value = a ? a.conversions : 0;
+  document.getElementById('mktAdStart').value = a ? (a.start_date||'') : '';
+  document.getElementById('mktAdEnd').value = a ? (a.end_date||'') : '';
+  document.getElementById('mktAdNotes').value = a ? (a.notes||'') : '';
+}
+function closeMktAdForm() { document.getElementById('mktAdForm').style.display = 'none'; }
+async function editMktAd(id) {
+  // find in table cache not available; fetch via list
+  try {
+    const data = await api('/api/mkt/ads');
+    const a = (data.ads||[]).find(x => x.id === id);
+    openMktAdForm(a);
+  } catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+async function saveMktAd() {
+  const id = document.getElementById('mktAdId').value;
+  const body = {
+    name: document.getElementById('mktAdName').value.trim(),
+    platform: document.getElementById('mktAdPlatform').value,
+    status: document.getElementById('mktAdStatus').value,
+    budget: document.getElementById('mktAdBudget').value ? Number(document.getElementById('mktAdBudget').value) : null,
+    currency: document.getElementById('mktAdCurrency').value.trim() || 'USD',
+    spend: Number(document.getElementById('mktAdSpend').value) || 0,
+    impressions: Number(document.getElementById('mktAdImpressions').value) || 0,
+    clicks: Number(document.getElementById('mktAdClicks').value) || 0,
+    conversions: Number(document.getElementById('mktAdConversions').value) || 0,
+    start_date: document.getElementById('mktAdStart').value.trim() || null,
+    end_date: document.getElementById('mktAdEnd').value.trim() || null,
+    notes: document.getElementById('mktAdNotes').value.trim() || null,
+  };
+  if (!body.name) { toast('Name required', 'err'); return; }
+  try {
+    if (id) await api('/api/mkt/ads/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    else await api('/api/mkt/ads', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Saved', 'ok'); closeMktAdForm(); await loadMktAds();
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+async function deleteMktAd(id) {
+  if (!confirm('Delete this ad?')) return;
+  try { await api('/api/mkt/ads/' + id, { method:'DELETE' }); toast('Deleted','ok'); await loadMktAds(); }
+  catch(e) { toast('Delete failed: ' + e, 'err'); }
+}
+
+// ===== Marketing: Content Calendar =====
+async function loadMktContent() {
+  const status = document.getElementById('mktContentStatusFilter')?.value || '';
+  const platform = document.getElementById('mktContentPlatformFilter')?.value || '';
+  const params = new URLSearchParams(); if (status) params.set('status', status); if (platform) params.set('platform', platform);
+  try {
+    const data = await api('/api/mkt/content' + (params.toString() ? '?' + params.toString() : ''));
+    const items = data.items || [];
+    const tbody = document.getElementById('mktContentTableBody');
+    tbody.innerHTML = items.map(c =>
+      '<tr><td>'+esc(c.title)+'</td><td>'+esc(c.platform)+'</td><td><span class="pill">'+esc(c.status)+'</span></td>'+
+      '<td>'+esc(c.scheduled_date||'—')+'</td><td>'+(c.published_url ? '<a href="'+esc(c.published_url)+'" target="_blank">link</a>' : '—')+'</td>'+
+      '<td style="white-space:nowrap"><button class="btn ghost sm" onclick="editMktContent('+c.id+')">Edit</button> <button class="btn ghost sm" onclick="deleteMktContent('+c.id+')">Del</button></td></tr>').join('');
+    if (!items.length) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No content yet.</td></tr>';
+    const counter = document.getElementById('mktContentCounter'); if (counter) counter.textContent = items.length + ' item(s)';
+  } catch(e) { document.getElementById('mktContentTableBody').innerHTML = '<tr><td colspan="6">Error: '+esc(String(e))+'</td></tr>'; }
+}
+function openMktContentForm(c) {
+  document.getElementById('mktContentForm').style.display = 'block';
+  document.getElementById('mktContentFormTitle').textContent = c ? 'Edit content' : 'New content';
+  document.getElementById('mktContentId').value = c ? c.id : '';
+  document.getElementById('mktContentTitle').value = c ? (c.title||'') : '';
+  document.getElementById('mktContentPlatform').value = c ? (c.platform||'linkedin') : 'linkedin';
+  document.getElementById('mktContentStatus').value = c ? (c.status||'idea') : 'idea';
+  document.getElementById('mktContentScheduled').value = c ? (c.scheduled_date||'') : '';
+  document.getElementById('mktContentUrl').value = c ? (c.published_url||'') : '';
+  document.getElementById('mktContentBody').value = c ? (c.content||'') : '';
+  document.getElementById('mktContentNotes').value = c ? (c.notes||'') : '';
+}
+function closeMktContentForm() { document.getElementById('mktContentForm').style.display = 'none'; }
+async function editMktContent(id) {
+  try {
+    const data = await api('/api/mkt/content');
+    const c = (data.items||[]).find(x => x.id === id);
+    openMktContentForm(c);
+  } catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+async function saveMktContent() {
+  const id = document.getElementById('mktContentId').value;
+  const body = {
+    title: document.getElementById('mktContentTitle').value.trim(),
+    platform: document.getElementById('mktContentPlatform').value,
+    status: document.getElementById('mktContentStatus').value,
+    scheduled_date: document.getElementById('mktContentScheduled').value.trim() || null,
+    published_url: document.getElementById('mktContentUrl').value.trim() || null,
+    content: document.getElementById('mktContentBody').value.trim() || null,
+    notes: document.getElementById('mktContentNotes').value.trim() || null,
+  };
+  if (!body.title) { toast('Title required', 'err'); return; }
+  try {
+    if (id) await api('/api/mkt/content/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    else await api('/api/mkt/content', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Saved', 'ok'); closeMktContentForm(); await loadMktContent();
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+async function deleteMktContent(id) {
+  if (!confirm('Delete this item?')) return;
+  try { await api('/api/mkt/content/' + id, { method:'DELETE' }); toast('Deleted','ok'); await loadMktContent(); }
+  catch(e) { toast('Delete failed: ' + e, 'err'); }
 }
 
 let peopleDebounceTimer = null;

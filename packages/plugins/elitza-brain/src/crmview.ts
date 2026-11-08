@@ -1180,6 +1180,89 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const ok = deleteProduct(Number(prodMatch[1]))
           return json({ ok })
         }
+
+        // Marketing: Email Campaigns
+        if (path === "/api/mkt/email-campaigns" && req.method === "GET") {
+          const { listMktEmailCampaigns } = await import("./crm.js")
+          const status = url.searchParams.get("status") ?? undefined
+          return json({ campaigns: listMktEmailCampaigns(status) })
+        }
+        if (path === "/api/mkt/email-campaigns" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addMktEmailCampaign } = await import("./crm.js")
+          try { return json({ campaign: addMktEmailCampaign(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const mktEmailMatch = path.match(/^\/api\/mkt\/email-campaigns\/(\d+)$/)
+        if (mktEmailMatch && req.method === "GET") {
+          const { getMktEmailCampaign } = await import("./crm.js")
+          const c = getMktEmailCampaign(Number(mktEmailMatch[1]))
+          if (!c) return json({ error: "not found" }, 404)
+          return json({ campaign: c })
+        }
+        if (mktEmailMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateMktEmailCampaign } = await import("./crm.js")
+          const c = updateMktEmailCampaign(Number(mktEmailMatch[1]), body)
+          if (!c) return json({ error: "not found" }, 404)
+          return json({ campaign: c })
+        }
+        if (mktEmailMatch && req.method === "DELETE") {
+          const { deleteMktEmailCampaign } = await import("./crm.js")
+          return json({ ok: deleteMktEmailCampaign(Number(mktEmailMatch[1])) })
+        }
+
+        // Marketing: Ads
+        if (path === "/api/mkt/ads" && req.method === "GET") {
+          const { listMktAds } = await import("./crm.js")
+          const status = url.searchParams.get("status") ?? undefined
+          const platform = url.searchParams.get("platform") ?? undefined
+          return json({ ads: listMktAds(status, platform) })
+        }
+        if (path === "/api/mkt/ads" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addMktAd } = await import("./crm.js")
+          try { return json({ ad: addMktAd(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const mktAdMatch = path.match(/^\/api\/mkt\/ads\/(\d+)$/)
+        if (mktAdMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateMktAd } = await import("./crm.js")
+          const a = updateMktAd(Number(mktAdMatch[1]), body)
+          if (!a) return json({ error: "not found" }, 404)
+          return json({ ad: a })
+        }
+        if (mktAdMatch && req.method === "DELETE") {
+          const { deleteMktAd } = await import("./crm.js")
+          return json({ ok: deleteMktAd(Number(mktAdMatch[1])) })
+        }
+
+        // Marketing: Content Calendar
+        if (path === "/api/mkt/content" && req.method === "GET") {
+          const { listMktContent } = await import("./crm.js")
+          const status = url.searchParams.get("status") ?? undefined
+          const platform = url.searchParams.get("platform") ?? undefined
+          return json({ items: listMktContent(status, platform) })
+        }
+        if (path === "/api/mkt/content" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addMktContent } = await import("./crm.js")
+          try { return json({ item: addMktContent(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const mktContentMatch = path.match(/^\/api\/mkt\/content\/(\d+)$/)
+        if (mktContentMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateMktContent } = await import("./crm.js")
+          const c = updateMktContent(Number(mktContentMatch[1]), body)
+          if (!c) return json({ error: "not found" }, 404)
+          return json({ item: c })
+        }
+        if (mktContentMatch && req.method === "DELETE") {
+          const { deleteMktContent } = await import("./crm.js")
+          return json({ ok: deleteMktContent(Number(mktContentMatch[1])) })
+        }
         const stratMatch = path.match(/^\/api\/products\/(\d+)\/strategy$/)
         if (stratMatch && req.method === "POST") {
           const id = Number(stratMatch[1])
