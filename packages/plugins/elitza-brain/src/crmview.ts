@@ -1,7 +1,7 @@
 /**
  * Elitza CRM "house" — a zero-build, single-page web dashboard over the CRM.
  *
- * Exposes `startCrmView()` which binds an HTTP server (default port 8787,
+ * Exposes `startCrmView()` which binds an HTTP server (default port 8800,
  * override with CRM_VIEW_PORT) serving a JSON API + an embedded HTML
  * dashboard. Reuses the exact same brain modules as the TUI, so there is no
  * second source of truth. Returns a cleanup function that stops the server.
@@ -10,7 +10,7 @@
  * the engine (elitza serve) starts and goes down when it stops.
  */
 
-import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers } from "./crm.js"
+import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail } from "./crm.js"
 import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
@@ -91,6 +91,128 @@ function guardrailReply(text: string): string | null {
 
 async function readBody(req: Request): Promise<any> {
   try { return await req.json() } catch { return {} }
+}
+
+async function runEnginePrompt(prompt: string, timeoutMs = 120000): Promise<string> {
+  // Resolve live engine
+  let url = process.env.ELITZA_ENGINE_URL || ""
+  let password = process.env.ELITZA_ENGINE_PASSWORD || ""
+  let live = false
+  try {
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const os = await import("node:os")
+    const home = process.env.HOME || os.homedir()
+    const cfgPath = path.join(home, ".local", "state", "opencode", "service.json")
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"))
+    if (cfg.pid) { try { process.kill(cfg.pid, 0) } catch { throw new Error("stale service") } }
+    if (cfg.url) { url = cfg.url; live = true }
+    if (cfg.password) password = cfg.password
+  } catch { /* no live engine */ }
+  if (process.env.ELITZA_ENGINE_URL) url = process.env.ELITZA_ENGINE_URL
+  if (!live && !process.env.ELITZA_ENGINE_URL) {
+    // Fall back to direct provider call (no skills, but keeps working)
+    const { directChat } = await import("./crmview.js").catch(() => ({} as any))
+    // directChat not exported; do a minimal direct call via soul/env instead
+  }
+  if (!url) throw new Error("No live Elitza engine. Start 'elitza serve' first.")
+  const auth = "Basic " + Buffer.from(":" + password).toString("base64")
+  const headers: any = { "Content-Type": "application/json", "Authorization": auth }
+  const createRes = await fetch(url + "/session", { method: "POST", headers, body: JSON.stringify({ title: "Strategy generation" }) })
+  if (!createRes.ok) throw new Error("session create failed: " + createRes.status)
+  const session = await createRes.json() as any
+  const sid = session.id
+  await fetch(url + "/session/" + sid + "/prompt", { method: "POST", headers, body: JSON.stringify({ parts: [{ type: "text", text: prompt }] }) })
+  // Poll for assistant reply
+  const deadline = Date.now() + timeoutMs
+  let reply = ""
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000))
+    try {
+      const msgRes = await fetch(url + "/session/" + sid + "/message", { headers })
+      const msgs = await msgRes.json() as any[]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i]
+        if (m.info?.role !== "assistant") continue
+        const text = (m.parts || []).filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n")
+        if (text && text.trim()) { reply = text; break }
+      }
+      if (reply) break
+    } catch { /* keep polling */ }
+  }
+  if (!reply) throw new Error("Strategy generation timed out or produced no output.")
+  return reply
+}
+
+function buildStrategyPrompt(product: any): string {
+  const priceLine = product.price != null ? `${product.currency || "USD"} ${product.price}` : "Free"
+  return `You are Elitza's strategy engine. Generate a COMPLETE, deterministic go-to-market and execution strategy for the following product. Apply your agent skills (copywriting, pricing, cold-email, ads, content-strategy, sales-enablement, offers, positioning) where relevant.
+
+PRODUCT DATA:
+- Name: ${product.name}
+- Type: ${product.type}
+- Price: ${priceLine}
+- Description: ${product.description || "(none)"}
+- Audience: ${product.audience || "(unspecified)"}
+- Deliverable: ${product.deliverable || "(unspecified)"}
+- URL: ${product.url || "(none)"}
+- Notes: ${product.notes || "(none)"}
+
+OUTPUT FORMAT (strict — output ONLY the markdown document below, no preamble, no commentary, no code fences, no reasoning. Your very first characters must be "# Strategy:"):
+
+# Strategy: ${product.name}
+
+## 1. Product snapshot
+- Name, type, price, audience, deliverable (one line each)
+
+## 2. Positioning
+- Value proposition (one sentence)
+- The problem it solves
+- Why now
+
+## 3. Ideal customer profile (ICP)
+- Who buys (target buyer, role, company size)
+- Pain points (3 bullets)
+- Budget signal
+- Where they hang out (channels/communities)
+
+## 4. Offer & pricing
+- Price rationale
+- Tiering / upsell / downsell
+- Guarantee / risk reversal
+
+## 5. Go-to-market channels
+- Primary channel (with why)
+- Secondary channel
+- Content-led channel
+
+## 6. Messaging & hooks
+- 3 hooks (short)
+- 3 subject lines
+- Primary CTA
+
+## 7. Sales process
+- Lead -> qualified -> proposal -> close (steps with owner + timeline)
+- Objection handling (top 3 objections + replies)
+
+## 8. 30-day content plan
+- 4 content pieces (title + channel + goal)
+
+## 9. KPIs & success metrics
+- 3 metrics with 30-day targets
+
+## 10. Risks & mitigations
+- 3 risks with mitigations
+
+## 11. Next 3 actions
+- Concrete, owner-assigned, dated next steps
+
+Rules: be specific to THIS product. No generic advice. No placeholders. Markdown only.`
+}
+
+async function generateProductStrategy(product: any): Promise<string> {
+  const prompt = buildStrategyPrompt(product)
+  return await runEnginePrompt(prompt, 120000)
 }
 
 
@@ -288,13 +410,41 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   return { thinking, reply: "(no response)" }
 }
 
+async function refreshGmailToken(account: any): Promise<string | null> {
+  if (!account?.refresh_token) return null
+  const fs = await import("node:fs")
+  const pathMod = await import("node:path")
+  const os = await import("node:os")
+  const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+  let env: Record<string, string> = {}
+  try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+  const clientId = env["GOOGLE_CLIENT_ID"]
+  const clientSecret = env["GOOGLE_CLIENT_SECRET"]
+  if (!clientId || !clientSecret) return null
+  try {
+    const r = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: account.refresh_token, client_id: clientId, client_secret: clientSecret }).toString(),
+    })
+    if (!r.ok) return null
+    const j = await r.json() as any
+    if (!j.access_token) return null
+    const { crmDb } = await import("./crm.js")
+    crmDb().run("UPDATE cloud_accounts SET access_token = ?, last_error = NULL, status = 'connected' WHERE id = ?", [j.access_token, account.id])
+    return j.access_token
+  } catch { return null }
+}
+
 export function startCrmView(ctx?: any): { stop: () => void; port: number } | null {
-  const PORT = Number(process.env.CRM_VIEW_PORT ?? 8787)
+  const PORT = Number(process.env.CRM_VIEW_PORT ?? 8800)
   let chatSessionId: string | null = null
+  let strategySessionId: string | null = null
   let server: ReturnType<typeof Bun.serve> | null = null
   try {
     server = Bun.serve({
       port: PORT,
+      idleTimeout: 255,
       async fetch(req, server) {
         const url = new URL(req.url)
         const path = url.pathname
@@ -366,6 +516,8 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             variant: soulGet("chat_variant", ""),
             mimo_key: soulGet("mimo_key", "not set"),
             maton_key: soulGet("maton_key", "not set"),
+            mail_auto_link: soulGet("mail_auto_link", "true") !== "false",
+            mail_signature: soulGet("mail_signature", ""),
             user_name: soulGet("user_name", ""),
             role: soulGet("role", ""),
             voice: soulGet("style", ""),
@@ -375,7 +527,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             heartbeat_last_tick: soulGet("heartbeat_last_tick", ""),
             heartbeat_last_error: heartbeatError,
             cost_7d: costSummary(7),
-            crm_port: Number(process.env.CRM_VIEW_PORT ?? 8787),
+            crm_port: Number(process.env.CRM_VIEW_PORT ?? 8800),
             elitza_home: process.env.ELITZA_HOME || (process.env.HOME + "/.elitza"),
           })
         }
@@ -860,6 +1012,18 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             maton: matonSet,
           })
         }
+        if (path === "/api/settings/mail" && req.method === "GET") {
+          const { soulGet } = await import("./soul.js")
+          return json({ auto_link: soulGet("mail_auto_link", "true") !== "false", signature: soulGet("mail_signature", "") })
+        }
+        if (path === "/api/settings/mail" && req.method === "POST") {
+          const body = await readBody(req)
+          const { soulSet } = await import("./soul.js")
+          if (body.auto_link !== undefined) soulSet("mail_auto_link", body.auto_link ? "true" : "false")
+          if (body.signature !== undefined) soulSet("mail_signature", String(body.signature ?? ""))
+          const { soulGet } = await import("./soul.js")
+          return json({ ok: true, auto_link: soulGet("mail_auto_link", "true") !== "false", signature: soulGet("mail_signature", "") })
+        }
         if (path === "/api/clients" && req.method === "GET") {
           const status = url.searchParams.get("status") ?? undefined
           const query = url.searchParams.get("q") ?? undefined
@@ -974,6 +1138,104 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             language: body.language,
           })
           return json({ client, created })
+        }
+        // Products (My Products — the expert's own stack)
+        if (path === "/api/products" && req.method === "GET") {
+          const type = url.searchParams.get("type") ?? undefined
+          const { listProducts } = await import("./crm.js")
+          return json({ products: listProducts(type) })
+        }
+        if (path === "/api/products" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addProduct } = await import("./crm.js")
+          try {
+            const product = addProduct({
+              name: String(body.name ?? ""),
+              type: body.type, description: body.description, price: body.price != null ? Number(body.price) : null,
+              currency: body.currency, url: body.url, audience: body.audience, deliverable: body.deliverable, notes: body.notes,
+            })
+            return json({ product })
+          } catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const prodMatch = path.match(/^\/api\/products\/(\d+)$/)
+        if (prodMatch && req.method === "GET") {
+          const { getProduct } = await import("./crm.js")
+          const product = getProduct(Number(prodMatch[1]))
+          if (!product) return json({ error: "not found" }, 404)
+          return json({ product })
+        }
+        if (prodMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateProduct } = await import("./crm.js")
+          const product = updateProduct(Number(prodMatch[1]), {
+            name: body.name, type: body.type, description: body.description,
+            price: body.price != null ? Number(body.price) : body.price, currency: body.currency,
+            url: body.url, audience: body.audience, deliverable: body.deliverable, notes: body.notes,
+          })
+          if (!product) return json({ error: "not found" }, 404)
+          return json({ product })
+        }
+        if (prodMatch && req.method === "DELETE") {
+          const { deleteProduct } = await import("./crm.js")
+          const ok = deleteProduct(Number(prodMatch[1]))
+          return json({ ok })
+        }
+        const stratMatch = path.match(/^\/api\/products\/(\d+)\/strategy$/)
+        if (stratMatch && req.method === "POST") {
+          const id = Number(stratMatch[1])
+          const { getProduct, updateProduct } = await import("./crm.js")
+          const product = getProduct(id)
+          if (!product) return json({ error: "not found" }, 404)
+          try {
+            const prompt = buildStrategyPrompt(product)
+            let reply = ""
+            if (ctx) {
+              try {
+                if (!strategySessionId) {
+                  const created = await ctx.session.create({ title: "Strategy generation" })
+                  strategySessionId = created.id
+                }
+                await ctx.session.prompt({ sessionID: strategySessionId, text: prompt } as any)
+                const deadline = Date.now() + 120000
+                while (Date.now() < deadline && !reply) {
+                  await new Promise((r) => setTimeout(r, 2000))
+                  try {
+                    const msgs = await ctx.session.context({ sessionID: strategySessionId })
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                      const m = msgs[i]
+                      if (m.type !== "assistant") continue
+                      const text = (m.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\\n")
+                      if (text && text.trim()) { reply = text; break }
+                    }
+                  } catch { /* keep polling */ }
+                }
+              } catch (e) {
+                console.error("[strategy] engine session error:", String(e))
+              }
+            }
+            if (!reply) {
+              // Fallback to direct provider call
+              try {
+                const r = await directChat(prompt, "opencode-go")
+                reply = r.reply
+              } catch (e) {
+                reply = ""
+                throw new Error("Strategy generation failed: " + String(e))
+              }
+            }
+            if (!reply) throw new Error("Strategy generation timed out or produced no output.")
+            // Strip any reasoning preamble: keep from the first markdown heading onward.
+            const headIdx = reply.search(/^#{1,2} /m)
+            const cleaned = headIdx >= 0 ? reply.slice(headIdx).trim() : reply.trim()
+            const updated = updateProduct(id, { strategy: cleaned, strategy_generated_at: new Date().toISOString() })
+            return json({ product: updated, strategy: reply })
+          } catch (e) {
+            return json({ error: String(e) }, 500)
+          }
+        }
+        if (path === "/api/products/summary" && req.method === "GET") {
+          const { productsSummary } = await import("./crm.js")
+          return json({ summary: productsSummary() })
         }
         if (path === "/api/bulk/status" && req.method === "POST") {
           const body = await readBody(req)
@@ -1413,6 +1675,463 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           return json(result)
         }
 
+        // ---- Mail ----
+        if (path === "/api/emails" && req.method === "GET") {
+          const folder = url.searchParams.get("folder") || undefined
+          const q = url.searchParams.get("q") || undefined
+          const clientId = url.searchParams.get("client_id")
+          const emails = listEmails({ folder, q: q || undefined, client_id: clientId ? Number(clientId) : undefined, limit: 200 })
+          return json({ emails, counts: emailCounts() })
+        }
+        if (path === "/api/emails/counts" && req.method === "GET") {
+          return json(emailCounts())
+        }
+        const emailMatch = path.match(/^\/api\/emails\/(\d+)$/)
+        if (emailMatch && req.method === "GET") {
+          const id = Number(emailMatch[1])
+          const e = getEmail(id)
+          if (!e) return json({ error: "not found" }, 404)
+          // mark read on open
+          if (e.folder === "inbox" && !e.is_read) updateEmail(id, { is_read: 1 })
+          return json({ email: getEmail(id) })
+        }
+        if (emailMatch && req.method === "POST") {
+          const id = Number(emailMatch[1])
+          const body = await readBody(req)
+          const updated = updateEmail(id, body || {})
+          if (!updated) return json({ error: "not found" }, 404)
+          return json({ email: updated })
+        }
+        if (emailMatch && req.method === "DELETE") {
+          const id = Number(emailMatch[1])
+          const e = getEmail(id)
+          if (!e) return json({ error: "not found" }, 404)
+          if (e.folder === "trash") {
+            deleteEmail(id)
+            return json({ ok: true, permanent: true })
+          }
+          const updated = moveEmail(id, "trash")
+          return json({ email: updated })
+        }
+        if (path === "/api/emails/match" && req.method === "GET") {
+          const addr = url.searchParams.get("email") || ""
+          const c = findClientByEmail(addr)
+          return json({ client: c })
+        }
+        if (path === "/api/emails/send" && req.method === "POST") {
+          const body = await readBody(req)
+          const to = String(body.to || "").trim()
+          const subject = String(body.subject || "").trim()
+          let text = String(body.body || "")
+          // append signature if configured
+          try {
+            const { soulGet } = await import("./soul.js")
+            const sig = soulGet("mail_signature", "")
+            if (sig && !text.includes(sig)) text = text + "\\n\\n" + sig
+          } catch {}
+          const cc = body.cc ? String(body.cc).trim() : null
+          const bcc = body.bcc ? String(body.bcc).trim() : null
+          if (!to) return json({ error: "recipient required" }, 400)
+          // resolve client
+          let clientId: number | null = body.client_id ? Number(body.client_id) : null
+          // auto-link only if enabled in settings
+          let autoLink = true
+          try { const { soulGet } = await import("./soul.js"); autoLink = soulGet("mail_auto_link", "true") !== "false" } catch {}
+          if (!clientId && autoLink) {
+            const c = findClientByEmail(to)
+            if (c) clientId = c.id
+          }
+          const client = clientId ? getClient(clientId) : null
+          const company = client?.company ?? null
+          const threadId = body.thread_id ? String(body.thread_id) : null
+          const isDraft = body.send !== true
+          const now = new Date().toISOString()
+          let resendId: string | null = null
+          const apiKey = process.env.RESEND_API_KEY?.trim()
+          const from = process.env.RESEND_FROM?.trim()
+          if (!isDraft && (!apiKey || !from)) return json({ error: "RESEND_API_KEY / RESEND_FROM not set" }, 400)
+          if (!isDraft) {
+            try {
+              const resp = await fetch((process.env.RESEND_URL || "https://api.resend.com/emails").replace(/\/$/, ""), {
+                method: "POST",
+                headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
+                body: JSON.stringify({ from, to: [to], cc: cc ? [cc] : undefined, bcc: bcc ? [bcc] : undefined, subject, text }),
+                signal: AbortSignal.timeout(15000),
+              })
+              if (!resp.ok) {
+                const detail = (await resp.text()).slice(0, 300)
+                return json({ error: "Resend HTTP " + resp.status + ": " + detail }, 502)
+              }
+              const j = await resp.json() as any
+              resendId = j?.id ?? null
+            } catch (e) {
+              return json({ error: String(e) }, 502)
+            }
+          }
+          const email = createEmail({
+            folder: isDraft ? "drafts" : "sent",
+            direction: "out",
+            from_addr: process.env.RESEND_FROM?.trim() || undefined,
+            to_addr: to,
+            cc: cc ?? undefined,
+            bcc: bcc ?? undefined,
+            subject,
+            body: text,
+            occurred_at: now,
+            client_id: clientId,
+            company: company ?? undefined,
+            thread_id: threadId ?? undefined,
+            resend_id: resendId ?? undefined,
+            is_read: 1,
+          })
+          // if replying, link thread
+          if (body.in_reply_to) {
+            const orig = getEmail(Number(body.in_reply_to))
+            if (orig) {
+              if (!email.thread_id) updateEmail(email.id, { thread_id: orig.thread_id || String(orig.id) })
+              // mark original read
+              updateEmail(Number(body.in_reply_to), { is_read: 1 })
+            }
+          }
+          // log interaction to client
+          if (!isDraft && clientId) {
+            try {
+              const { logInteraction } = await import("./crm.js")
+              logInteraction(clientId, {
+                kind: "email_sent",
+                direction: "out",
+                channel: "email",
+                status: "sent",
+                subject,
+                body: text,
+                occurred_at: now,
+              })
+            } catch {}
+          }
+          return json({ email: getEmail(email.id), counts: emailCounts() })
+        }
+        if (path === "/api/mail/inbound" && req.method === "POST") {
+          const body = await readBody(req)
+          // Resend inbound webhook shape (best-effort): { from, to, subject, text, html, ... }
+          const from = String(body.from || body.sender || "").trim()
+          const to = Array.isArray(body.to) ? body.to.join(", ") : String(body.to || "").trim()
+          const subject = String(body.subject || "").trim()
+          const text = String(body.text || body.body || body.plain || "")
+          const html = body.html ? String(body.html) : null
+          let autoLink = true
+          try { const { soulGet } = await import("./soul.js"); autoLink = soulGet("mail_auto_link", "true") !== "false" } catch {}
+          const client = autoLink ? (findClientByEmail(from) || findClientByEmail(to)) : null
+          const email = createEmail({
+            folder: "inbox",
+            direction: "in",
+            from_addr: from || undefined,
+            to_addr: to || undefined,
+            subject,
+            body: text,
+            html: html ?? undefined,
+            occurred_at: body.date ? String(body.date) : new Date().toISOString(),
+            client_id: client?.id ?? null,
+            company: client?.company ?? undefined,
+            is_read: 0,
+          })
+          if (client) {
+            try {
+              const { logInteraction } = await import("./crm.js")
+              logInteraction(client.id, {
+                kind: "email_received",
+                direction: "in",
+                channel: "email",
+                status: "received",
+                subject,
+                body: text,
+                occurred_at: email.occurred_at,
+              })
+            } catch {}
+          }
+          return json({ email, counts: emailCounts() })
+        }
+
+        // ---- Gmail (Google Workspace) integration ----
+        if (path === "/api/mail/gmail/accounts" && req.method === "GET") {
+          const accs = crmDb().query("SELECT id, provider, account_label, status, last_sync, last_error FROM cloud_accounts WHERE provider = 'gmail'").all() as any[]
+          return json({ accounts: accs })
+        }
+        if (path === "/api/mail/gmail/connect" && req.method === "POST") {
+          const body = await readBody(req)
+          const token = String(body.access_token || "").trim()
+          if (!token) return json({ error: "access_token required" }, 400)
+          const label = String(body.label || body.email || "Google Workspace").trim()
+          const { connectCloud } = await import("./crm.js")
+          const acc = connectCloud("gmail", token, body.refresh_token ? String(body.refresh_token) : undefined, label)
+          return json({ account: acc })
+        }
+        if (path === "/api/mail/gmail/disconnect" && req.method === "POST") {
+          const body = await readBody(req)
+          const { disconnectCloud } = await import("./crm.js")
+          disconnectCloud(Number(body.id))
+          return json({ ok: true })
+        }
+        if (path === "/api/mail/gmail/sync" && req.method === "POST") {
+          const body = await readBody(req)
+          const accountId = Number(body.account_id)
+          const acc = crmDb().query("SELECT * FROM cloud_accounts WHERE id = ? AND provider = 'gmail'").get(accountId) as any
+          if (!acc) return json({ error: "account not found" }, 404)
+          let token = acc.access_token
+          // refresh if needed
+          const probe = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { "Authorization": "Bearer " + token } })
+          if (probe.status === 401) {
+            const nt = await refreshGmailToken(acc)
+            if (nt) token = nt
+          }
+          const max = Math.min(100, Number(body.limit ?? 50))
+          const labels = Array.isArray(body.labels) ? body.labels : ["INBOX", "SENT", "DRAFT", "TRASH", "STARRED"]
+          let imported = 0
+          try {
+            // list message ids per label
+            const seen = new Set<string>()
+            const msgIds: string[] = []
+            for (const lab of labels) {
+              const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=" + encodeURIComponent(lab) + "&maxResults=" + max, { headers: { "Authorization": "Bearer " + token } })
+              if (!listRes.ok) continue
+              const lj = await listRes.json() as any
+              for (const m of (lj.messages || [])) { if (!seen.has(m.id)) { seen.add(m.id); msgIds.push(m.id) } }
+            }
+            // fetch each
+            for (const mid of msgIds.slice(0, max * 2)) {
+              const existing = crmDb().query("SELECT id FROM emails WHERE gmail_id = ?").get(mid) as any
+              if (existing) continue
+              const mRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/" + encodeURIComponent(mid) + "?format=full", { headers: { "Authorization": "Bearer " + token } })
+              if (!mRes.ok) continue
+              const m = await mRes.json() as any
+              const headers = (m.payload?.headers || []) as any[]
+              const getH = (name: string) => headers.find((h: any) => (h.name || "").toLowerCase() === name.toLowerCase())?.value || ""
+              const from = getH("From")
+              const to = getH("To")
+              const cc = getH("Cc")
+              const subject = getH("Subject")
+              const date = getH("Date")
+              // body
+              let text = ""
+              let html: string | null = null
+              const parts = m.payload?.parts || [m.payload]
+              function walk(p: any) {
+                if (!p) return
+                if (p.mimeType === "text/plain" && p.body?.data) text += Buffer.from(p.body.data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+                if (p.mimeType === "text/html" && p.body?.data) html = Buffer.from(p.body.data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+                for (const sp of (p.parts || [])) walk(sp)
+                if (!p.parts && p.body?.data && p.mimeType?.startsWith("text/")) {
+                  const dec = Buffer.from(p.body.data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+                  if (p.mimeType === "text/html") html = dec; else if (!text) text = dec
+                }
+              }
+              for (const p of parts) walk(p)
+              if (!text && m.snippet) text = m.snippet
+              const labelIds: string[] = m.labelIds || []
+              let folder = "inbox"
+              if (labelIds.includes("SENT")) folder = "sent"
+              else if (labelIds.includes("DRAFT")) folder = "drafts"
+              else if (labelIds.includes("TRASH")) folder = "trash"
+              else if (labelIds.includes("SPAM")) folder = "spam"
+              const isStarred = labelIds.includes("STARRED") ? 1 : 0
+              const isUnread = !labelIds.includes("UNREAD") ? 1 : 0
+              const occurred = date ? new Date(date).toISOString() : new Date(Number(m.internalDate || Date.now())).toISOString()
+              const autoLink = true
+              let client = null
+              try { const { soulGet } = await import("./soul.js"); if (soulGet("mail_auto_link", "true") !== "false") client = findClientByEmail(from) } catch {}
+              const { createEmail, logInteraction } = await import("./crm.js")
+              const email = createEmail({
+                folder,
+                direction: labelIds.includes("SENT") ? "out" : "in",
+                from_addr: from || undefined,
+                to_addr: to || undefined,
+                cc: cc || undefined,
+                subject: subject || undefined,
+                body: text || m.snippet || "",
+                html: html ?? undefined,
+                occurred_at: occurred,
+                client_id: client?.id ?? null,
+                company: client?.company ?? undefined,
+                gmail_id: mid,
+                provider: "gmail",
+                is_read: isUnread,
+                is_starred: isStarred,
+              })
+              imported++
+              if (client && !labelIds.includes("SENT")) {
+                try { logInteraction(client.id, { kind: "email_received", direction: "in", channel: "email", status: "received", subject, body: text || m.snippet || "", occurred_at: occurred }) } catch {}
+              }
+            }
+            crmDb().run("UPDATE cloud_accounts SET last_sync = ?, last_error = NULL, status = 'connected' WHERE id = ?", [new Date().toISOString(), accountId])
+          } catch (e) {
+            crmDb().run("UPDATE cloud_accounts SET last_error = ?, status = 'error' WHERE id = ?", [String(e), accountId])
+            return json({ error: String(e), imported }, 502)
+          }
+          return json({ ok: true, imported, counts: emailCounts() })
+        }
+        if (path === "/api/mail/gmail/send" && req.method === "POST") {
+          const body = await readBody(req)
+          const accountId = Number(body.account_id)
+          const acc = crmDb().query("SELECT * FROM cloud_accounts WHERE id = ? AND provider = 'gmail'").get(accountId) as any
+          if (!acc) return json({ error: "gmail account not found" }, 404)
+          let token = acc.access_token
+          const probe = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: { "Authorization": "Bearer " + token } })
+          if (probe.status === 401) {
+            const nt = await refreshGmailToken(acc)
+            if (nt) token = nt
+          }
+          const to = String(body.to || "").trim()
+          const subject = String(body.subject || "").trim()
+          let text = String(body.body || "")
+          const cc = body.cc ? String(body.cc).trim() : ""
+          const bcc = body.bcc ? String(body.bcc).trim() : ""
+          if (!to) return json({ error: "recipient required" }, 400)
+          // signature
+          try { const { soulGet } = await import("./soul.js"); const sig = soulGet("mail_signature", ""); if (sig && !text.includes(sig)) text = text + "\\n\\n" + sig } catch {}
+          // build RFC2822
+          const from = acc.account_label || ""
+          const lines = [
+            "From: " + from,
+            "To: " + to,
+            cc ? "Cc: " + cc : "",
+            bcc ? "Bcc: " + bcc : "",
+            "Subject: " + subject,
+            "MIME-Version: 1.0",
+            "Content-Type: text/plain; charset=UTF-8",
+            "",
+            text,
+          ].filter(Boolean)
+          const raw = Buffer.from(lines.join("\r\n")).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+          const resp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+            body: JSON.stringify({ raw }),
+            signal: AbortSignal.timeout(20000),
+          })
+          if (!resp.ok) {
+            const detail = (await resp.text()).slice(0, 300)
+            return json({ error: "Gmail HTTP " + resp.status + ": " + detail }, 502)
+          }
+          const j = await resp.json() as any
+          let clientId: number | null = body.client_id ? Number(body.client_id) : null
+          try { const { soulGet } = await import("./soul.js"); const autoLink = soulGet("mail_auto_link", "true") !== "false"; if (!clientId && autoLink) { const c = findClientByEmail(to); if (c) clientId = c.id } } catch {}
+          const client = clientId ? getClient(clientId) : null
+          const { createEmail, logInteraction } = await import("./crm.js")
+          const email = createEmail({
+            folder: "sent",
+            direction: "out",
+            from_addr: from || undefined,
+            to_addr: to,
+            cc: cc || undefined,
+            bcc: bcc || undefined,
+            subject,
+            body: text,
+            occurred_at: new Date().toISOString(),
+            client_id: clientId,
+            company: client?.company ?? undefined,
+            gmail_id: j?.id ?? undefined,
+            provider: "gmail",
+            is_read: 1,
+          })
+          if (clientId) {
+            try { logInteraction(clientId, { kind: "email_sent", direction: "out", channel: "email", status: "sent", subject, body: text, occurred_at: email.occurred_at }) } catch {}
+          }
+          return json({ email: getEmail(email.id), counts: emailCounts() })
+        }
+
+        // ---- Google OAuth (one-click login) for Gmail ----
+        if (path === "/api/mail/gmail/oauth-config" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const envPath = pathMod.join(home, ".env")
+          let env: Record<string, string> = {}
+          try { for (const line of fs.readFileSync(envPath, "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          return json({ client_id: env["GOOGLE_CLIENT_ID"] || "", client_secret_set: !!env["GOOGLE_CLIENT_SECRET"], redirect_uri: "http://127.0.0.1:" + (process.env.CRM_VIEW_PORT ?? 8800) + "/oauth/google/callback" })
+        }
+        if (path === "/api/mail/gmail/oauth-config" && req.method === "POST") {
+          const body = await readBody(req)
+          const cid = String(body.client_id || "").trim()
+          const csecret = String(body.client_secret || "").trim()
+          if (!cid) return json({ error: "client_id required" }, 400)
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const envPath = pathMod.join(home, ".env")
+          let lines: string[] = []
+          try { lines = fs.readFileSync(envPath, "utf8").split("\\n") } catch {}
+          const filtered = lines.filter((l) => !l.trim().startsWith("GOOGLE_CLIENT_ID=") && !l.trim().startsWith("GOOGLE_CLIENT_SECRET="))
+          filtered.push("GOOGLE_CLIENT_ID=" + cid)
+          if (csecret) filtered.push("GOOGLE_CLIENT_SECRET=" + csecret)
+          fs.mkdirSync(pathMod.dirname(envPath), { recursive: true })
+          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\\n") + "\\n", { mode: 0o600 })
+          try { fs.chmodSync(envPath, 0o600) } catch {}
+          return json({ ok: true, client_id: cid, client_secret_set: !!csecret || !!lines.some(l => l.trim().startsWith("GOOGLE_CLIENT_SECRET=")) })
+        }
+        if (path === "/api/mail/gmail/auth-url" && req.method === "GET") {
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          let env: Record<string, string> = {}
+          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          const clientId = env["GOOGLE_CLIENT_ID"]
+          if (!clientId) return json({ error: "Google OAuth client_id not configured" }, 400)
+          const port = process.env.CRM_VIEW_PORT ?? 8800
+          const redirectUri = "http://127.0.0.1:" + port + "/oauth/google/callback"
+          const state = Math.random().toString(36).slice(2) + Date.now().toString(36)
+          // store state in a temp file for verification
+          try { fs.writeFileSync(pathMod.join(home, ".oauth_state"), state, { mode: 0o600 }) } catch {}
+          const scope = encodeURIComponent("https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email")
+          const url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=" + encodeURIComponent(clientId) + "&redirect_uri=" + encodeURIComponent(redirectUri) + "&response_type=code&scope=" + scope + "&access_type=offline&prompt=consent&state=" + encodeURIComponent(state)
+          return json({ url, state })
+        }
+        if (path === "/oauth/google/callback" && req.method === "GET") {
+          const code = url.searchParams.get("code")
+          const state = url.searchParams.get("state")
+          const fs = await import("node:fs")
+          const pathMod = await import("node:path")
+          const os = await import("node:os")
+          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          // verify state
+          let savedState = ""
+          try { savedState = fs.readFileSync(pathMod.join(home, ".oauth_state"), "utf8").trim() } catch {}
+          if (!code) return new Response("Missing code", { status: 400 })
+          // read client creds
+          let env: Record<string, string> = {}
+          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          const clientId = env["GOOGLE_CLIENT_ID"]
+          const clientSecret = env["GOOGLE_CLIENT_SECRET"]
+          if (!clientId || !clientSecret) return new Response("OAuth client not configured", { status: 400 })
+          const port = process.env.CRM_VIEW_PORT ?? 8800
+          const redirectUri = "http://127.0.0.1:" + port + "/oauth/google/callback"
+          const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ grant_type: "authorization_code", code: code, redirect_uri: redirectUri, client_id: clientId, client_secret: clientSecret }).toString(),
+          })
+          if (!tokenRes.ok) {
+            const detail = (await tokenRes.text()).slice(0, 300)
+            return new Response("Token exchange failed: " + detail, { status: 502 })
+          }
+          const tj = await tokenRes.json() as any
+          const accessToken = tj.access_token
+          const refreshToken = tj.refresh_token
+          // get user email
+          let label = "Google Workspace"
+          try {
+            const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers: { "Authorization": "Bearer " + accessToken } })
+            const uj = await ui.json() as any
+            if (uj.email) label = uj.email
+          } catch {}
+          const { connectCloud } = await import("./crm.js")
+          const acc = connectCloud("gmail", accessToken, refreshToken, label)
+          // store refresh token in a sidecar file keyed by account id (cloud_accounts already stores refresh_token)
+          try { fs.unlinkSync(pathMod.join(home, ".oauth_state")) } catch {}
+          return Response.redirect("http://127.0.0.1:" + port + "/?gmail=connected", 302)
+        }
+
         return new Response(HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } })
       },
       websocket: {
@@ -1497,6 +2216,27 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
     return null
   }
 
+  // Background auto-sync of connected Gmail accounts every 5 minutes.
+  const AUTO_SYNC_MS = 5 * 60 * 1000
+  const runAutoSync = async () => {
+    try {
+      const accs = crmDb().query("SELECT id FROM cloud_accounts WHERE provider = 'gmail' AND status = 'connected'").all() as { id: number }[]
+      for (const a of accs) {
+        try {
+          await fetch("http://127.0.0.1:" + PORT + "/api/mail/gmail/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ account_id: a.id, limit: 50 }),
+          })
+        } catch {}
+      }
+    } catch {}
+  }
+  // first sync shortly after start
+  setTimeout(runAutoSync, 10 * 1000)
+  const autoSyncTimer = setInterval(runAutoSync, AUTO_SYNC_MS)
+  // keep reference to avoid GC (store on server object not needed; interval holds)
+
   console.log(`[crm-view] Elitza CRM house listening on http://127.0.0.1:${PORT}`)
   // Auto-open in the default browser on first start (best-effort, never fatal).
   if (!process.env.CRM_VIEW_NO_OPEN) {
@@ -1507,7 +2247,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
       // No browser available — the URL is printed above.
     }
   }
-  return { stop: () => server?.stop(true), port: PORT }
+  return { stop: () => { try { clearInterval(autoSyncTimer) } catch {}; server?.stop(true) }, port: PORT }
 }
 
 import { fileURLToPath } from "node:url"

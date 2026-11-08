@@ -21,6 +21,7 @@ import { ELITZA_HOME } from "./db.js"
 import { getPersonality } from "./soul.js"
 import { issue, verifyToken, delegate, revoke, listIssued, listRevoked, covers, attachSession, detachSession, getSessionCapability } from "./capability.js"
 import { addTrigger, listTriggers, setTriggerStatus, deleteTrigger, processTriggers } from "./crm.js"
+import { addProduct, listProducts, getProduct, updateProduct, deleteProduct, productsSummary } from "./crm.js"
 import { setCustomField, getCustomFields, deleteCustomField, addDeal, updateDeal, listDeals, deleteDeal, addTag, removeTag, listTags, allTags, logAudit, listAudit, costSummary, exportClientsCSV, importClientsCSV, connectCloud, disconnectCloud, listCloudAccounts, continuousBackupStream, uploadBackupToCloud, revenueStats, weeklyDigest } from "./crm.js"
 import { listTemplates, getTemplate, seedTemplates, instantiateTemplate } from "./templates.js"
 import {
@@ -1605,6 +1606,83 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
         } catch (error) {
           return { content: `Task error: ${String(error)}` }
         }
+      },
+    },
+    {
+      name: "product_list",
+      description: "List the products/services/workflows/templates the expert sells (My Products).",
+      input: {
+        type: "object",
+        properties: {
+          type: { type: "string", description: "Filter by type (product, service, workflow, automation, template, worksheet, other)" },
+        },
+      },
+      execute: async (input) => ({ content: JSON.stringify(listProducts(input.type), null, 2) }),
+    },
+    {
+      name: "product_add",
+      description: "Add a product/service/workflow/template to the expert's stack (My Products).",
+      input: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Product name" },
+          type: { type: "string", description: "Type: product, service, workflow, automation, template, worksheet, other" },
+          description: { type: "string" },
+          price: { type: "number", description: "Price in EUR" },
+          currency: { type: "string" },
+          url: { type: "string" },
+          audience: { type: "string" },
+          deliverable: { type: "string" },
+          notes: { type: "string" },
+        },
+        required: ["name"],
+      },
+      execute: async (input) => {
+        try {
+          const product = addProduct({
+            name: String(input.name),
+            type: input.type, description: input.description,
+            price: input.price != null ? Number(input.price) : null,
+            currency: input.currency, url: input.url, audience: input.audience,
+            deliverable: input.deliverable, notes: input.notes,
+          })
+          return { content: JSON.stringify(product, null, 2) }
+        } catch (e) { return { content: `Error: ${String(e)}` } }
+      },
+    },
+    {
+      name: "product_update",
+      description: "Update a product in the expert's stack by id.",
+      input: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          name: { type: "string" },
+          type: { type: "string" },
+          description: { type: "string" },
+          price: { type: "number" },
+          currency: { type: "string" },
+          url: { type: "string" },
+          audience: { type: "string" },
+          deliverable: { type: "string" },
+          notes: { type: "string" },
+        },
+        required: ["id"],
+      },
+      execute: async (input) => {
+        const { id, ...patch } = input
+        const product = updateProduct(Number(id), patch)
+        if (!product) return { content: "Not found" }
+        return { content: JSON.stringify(product, null, 2) }
+      },
+    },
+    {
+      name: "product_delete",
+      description: "Delete a product from the expert's stack by id.",
+      input: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] },
+      execute: async (input) => {
+        const ok = deleteProduct(Number(input.id))
+        return { content: ok ? "Deleted" : "Not found" }
       },
     },
   ]

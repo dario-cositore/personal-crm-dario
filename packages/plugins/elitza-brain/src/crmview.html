@@ -642,6 +642,25 @@
   @keyframes elitzaBounce { 0%,80%,100% { transform:scale(.6); opacity:.4;} 40% { transform:scale(1); opacity:1;} }
   .chat-cmd { font-family:var(--mono); font-size:12px; color:var(--text-muted); background:var(--bg-elevated); padding:2px 6px; border-radius:4px; }
 </style>
+<style>
+  .mail-folder { display:flex;align-items:center;justify-content:space-between;width:100%;padding:7px 10px;border:none;background:transparent;color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;text-align:left; }
+  .mail-folder:hover { background:var(--bg-hover);color:var(--text); }
+  .mail-folder.active { background:var(--bg-active);color:var(--text);font-weight:600; }
+  .mail-folder .badge { font-size:10px;color:var(--text-muted);font-family:var(--mono); }
+  .mail-row { display:grid;grid-template-columns:24px 1fr auto;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;align-items:center; }
+  .mail-row:hover { background:var(--bg-hover); }
+  .mail-row.unread { font-weight:600; }
+  .mail-row .subj { font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .mail-row .snippet { font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .mail-row .meta { font-size:11px;color:var(--text-muted);text-align:right;white-space:nowrap; }
+  .mail-detail h2 { font-size:16px;font-weight:600;margin:0 0 6px; }
+  .mail-detail .hdr { font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6; }
+  .mail-detail .body { white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text); }
+  .compose-overlay { position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:60;display:flex;align-items:center;justify-content:center; }
+  .compose-card { background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius-lg);width:min(640px,92vw);max-height:90vh;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:8px; }
+  .compose-card input,.compose-card textarea { width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text);font-size:13px;box-sizing:border-box; }
+  .compose-card textarea { min-height:160px;resize:vertical;font-family:inherit; }
+</style>
 </head>
 <body>
 <div class="app">
@@ -700,6 +719,17 @@
     <button class="nav-item" onclick="showView('tasks', this); loadTasks()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
       Tasks
+    </button>
+    <div class="nav-section">Communication</div>
+    <button class="nav-item" onclick="showView('mail', this); loadMail()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      Mail
+      <span class="nav-badge" id="mailBadge" style="display:none">0</span>
+    </button>
+    <div class="nav-section">My Products</div>
+    <button class="nav-item" onclick="showView('products', this); loadProducts()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      Products
     </button>
     <div class="nav-section">Lists</div>
     <button class="nav-item" onclick="showView('lists', this); loadLists()">
@@ -860,6 +890,83 @@
         </div>
         <div id="listsBody" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px"></div>
       </div>
+      <div id="products" class="view">
+        <div class="page-header">
+          <h1>My Products</h1>
+          <p>What you sell. The agent uses this to know your stack and match offers to clients.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" onclick="openProductForm()">+ Add product</button>
+          <select id="productTypeFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadProducts()">
+            <option value="">All types</option>
+            <option value="product">Product</option>
+            <option value="service">Service</option>
+            <option value="workflow">Workflow</option>
+            <option value="automation">Automation</option>
+            <option value="template">Template</option>
+            <option value="worksheet">Worksheet</option>
+            <option value="other">Other</option>
+          </select>
+          <span id="productsCounter" style="color:var(--text-muted);font-size:13px"></span>
+        </div>
+        <div id="productsForm" style="display:none;margin-bottom:16px" class="section-card">
+          <h4 id="productFormTitle">Add product</h4>
+          <input type="hidden" id="productId" value="">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>Name<input id="productName" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Type<select id="productType" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)">
+              <option value="product">Product</option>
+              <option value="service">Service</option>
+              <option value="workflow">Workflow</option>
+              <option value="automation">Automation</option>
+              <option value="template">Template</option>
+              <option value="worksheet">Worksheet</option>
+              <option value="other">Other</option>
+            </select></label>
+            <label>Price (EUR)<input id="productPrice" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Currency<input id="productCurrency" type="text" value="EUR" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Description<textarea id="productDescription" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+            <label style="grid-column:1/-1">Audience<input id="productAudience" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Deliverable<input id="productDeliverable" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">URL<input id="productUrl" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Notes<textarea id="productNotes" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm" onclick="saveProduct()">Save</button>
+            <button class="btn sm ghost" onclick="closeProductForm()">Cancel</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table class="scout-table" id="productsTable" style="width:100%">
+            <thead><tr><th>Name</th><th>Type</th><th>Price</th><th>Audience</th><th>Deliverable</th><th></th></tr></thead>
+            <tbody id="productsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="productdetail" class="view">
+        <div class="page-header" style="display:flex;align-items:center;gap:10px">
+          <button class="btn ghost sm" onclick="showView('products', null); loadProducts()">← Back</button>
+          <div>
+            <h1 id="pdTitle">Product</h1>
+            <p id="pdSubtitle">Product profile & strategy</p>
+          </div>
+        </div>
+        <div id="pdBody" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+          <div class="section-card" id="pdInfo">
+            <h4>Product details</h4>
+            <div id="pdInfoBody" style="font-size:13px;line-height:1.6"></div>
+          </div>
+          <div class="section-card" id="pdStrategyCard" style="grid-column:1/-1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <h4 style="margin:0">System Strategy</h4>
+              <div style="flex:1"></div>
+              <button class="btn sm" id="pdStrategyBtn" onclick="createStrategy()">Create Strategy</button>
+            </div>
+            <div id="pdStrategyStatus" style="color:var(--text-muted);font-size:12px;margin-bottom:8px"></div>
+            <pre id="pdStrategy" style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.6;background:var(--bg-elevated);padding:12px;border-radius:var(--radius-md);border:1px solid var(--border);max-height:70vh;overflow:auto"></pre>
+          </div>
+        </div>
+      </div>
       <div id="tableview" class="view">
         <div class="page-header">
           <h1>Clients</h1>
@@ -896,7 +1003,14 @@
           <h1>Settings</h1>
           <p>Elitza's configuration and status.</p>
         </div>
-        <div id="settingsBody" style="max-width:720px;display:flex;flex-direction:column;gap:16px"></div>
+        <div class="settings-tabs" style="display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:8px">
+          <button class="btn sm primary settings-tab active" data-tab="general" onclick="switchSettingsTab('general')">General</button>
+          <button class="btn sm secondary settings-tab" data-tab="ai" onclick="switchSettingsTab('ai')">AI Provider</button>
+          <button class="btn sm secondary settings-tab" data-tab="integrations" onclick="switchSettingsTab('integrations')">Integrations</button>
+          <button class="btn sm secondary settings-tab" data-tab="skills" onclick="switchSettingsTab('skills')">Skills & MCP</button>
+          <button class="btn sm secondary settings-tab" data-tab="backup" onclick="switchSettingsTab('backup')">Backup & Cost</button>
+        </div>
+        <div id="settingsBody" style="max-width:960px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:start"></div>
       </div>
       <div id="revenue" class="view">
         <div class="page-header">
@@ -982,6 +1096,34 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div id="mail" class="view">
+        <div class="page-header" style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+          <h1 style="margin:0">Mail</h1>
+          <p style="margin:0;color:var(--text-muted);font-size:13px">Inbox, sent, drafts and trash. Emails auto-link to clients by address.</p>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm" onclick="composeMail()">+ Compose</button>
+            <button class="btn sm secondary" onclick="loadMail()">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="mail-layout" style="display:grid;grid-template-columns:180px 1fr;gap:12px;min-height:60vh">
+          <aside class="mail-folders" style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px;display:flex;flex-direction:column;gap:2px">
+            <button class="mail-folder active" data-folder="inbox" onclick="mailSetFolder('inbox')">Inbox <span class="badge" id="mailCount-inbox"></span></button>
+            <button class="mail-folder" data-folder="starred" onclick="mailSetFolder('starred')">Starred <span class="badge" id="mailCount-starred"></span></button>
+            <button class="mail-folder" data-folder="sent" onclick="mailSetFolder('sent')">Sent <span class="badge" id="mailCount-sent"></span></button>
+            <button class="mail-folder" data-folder="drafts" onclick="mailSetFolder('drafts')">Drafts <span class="badge" id="mailCount-drafts"></span></button>
+            <button class="mail-folder" data-folder="trash" onclick="mailSetFolder('trash')">Trash <span class="badge" id="mailCount-trash"></span></button>
+            <button class="mail-folder" data-folder="all" onclick="mailSetFolder('all')">All mail <span class="badge" id="mailCount-all"></span></button>
+          </aside>
+          <section class="mail-main" style="display:flex;flex-direction:column;gap:8px;min-width:0">
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="mailSearch" type="text" placeholder="Search mail…" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" oninput="debounceMailSearch()">
+              <span id="mailStatus" style="font-size:12px;color:var(--text-muted)"></span>
+            </div>
+            <div id="mailDetail" style="display:none;background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px"></div>
+            <div id="mailList" style="background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius-md);overflow:auto"></div>
+          </section>
         </div>
       </div>
       <div id="companydetail" class="view"></div>
@@ -1146,7 +1288,7 @@ function showView(name, el) {
     target = Array.from(document.querySelectorAll('.nav-item')).find(b => (b.getAttribute('onclick')||'').indexOf("'"+name+"'") !== -1);
   }
   if (target) target.classList.add('active');
-  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator']};
+  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],products:['My Products','What you sell — the expert stack the agent knows'],productdetail:['Product Profile','Product details and system strategy'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator'],mail:['Mail','Email inbox, sent, drafts and trash']};
   if (titles[name]) { document.getElementById('topTitle').textContent = titles[name][0]; document.getElementById('topSubtitle').textContent = titles[name][1]; }
 }
 
@@ -1298,6 +1440,148 @@ async function loadLists() {
     const body = document.getElementById('listsBody');
     body.innerHTML = tags.map(t => '<span class="pill" style="cursor:pointer" onclick="toast(\'Tag: '+esc(t)+'\',\'info\')">'+esc(t)+'</span>').join('') || '<div style="color:var(--text-muted)">No tags yet. Add tags via crm tag.</div>';
   } catch(e) { document.getElementById('listsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
+}
+
+async function loadProducts() {
+  const type = document.getElementById('productTypeFilter')?.value || '';
+  const params = new URLSearchParams();
+  if (type) params.set('type', type);
+  try {
+    const data = await api('/api/products' + (params.toString() ? '?' + params.toString() : ''));
+    const products = data.products || [];
+    const tbody = document.getElementById('productsTableBody');
+    tbody.innerHTML = products.map(p =>
+      '<tr><td style="cursor:pointer;color:var(--accent)" onclick="openProductDetail('+p.id+')">'+esc(p.name)+'</td>'+
+      '<td><span class="pill">'+esc(p.type||'')+'</span></td>'+
+      '<td>'+(p.price!=null?('EUR '+p.price):'—')+'</td>'+
+      '<td>'+esc(p.audience||'—')+'</td>'+
+      '<td>'+esc(p.deliverable||'—')+'</td>'+
+      '<td style="white-space:nowrap"><button class="btn ghost sm" onclick="openProductDetail('+p.id+')">View</button> <button class="btn ghost sm" onclick="editProduct('+p.id+')">Edit</button> <button class="btn ghost sm" onclick="deleteProduct('+p.id+')">Del</button></td></tr>').join('');
+    if (!products.length) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No products yet. Add what you sell.</td></tr>';
+    const counter = document.getElementById('productsCounter');
+    if (counter) counter.textContent = products.length + ' product(s)';
+  } catch(e) { document.getElementById('productsTableBody').innerHTML = '<tr><td colspan="6">Error: '+esc(String(e))+'</td></tr>'; }
+}
+
+function openProductForm(p) {
+  document.getElementById('productsForm').style.display = 'block';
+  document.getElementById('productFormTitle').textContent = p ? 'Edit product' : 'Add product';
+  document.getElementById('productId').value = p ? p.id : '';
+  document.getElementById('productName').value = p ? (p.name||'') : '';
+  document.getElementById('productType').value = p ? (p.type||'product') : 'product';
+  document.getElementById('productPrice').value = p && p.price!=null ? p.price : '';
+  document.getElementById('productCurrency').value = p ? (p.currency||'EUR') : 'EUR';
+  document.getElementById('productDescription').value = p ? (p.description||'') : '';
+  document.getElementById('productAudience').value = p ? (p.audience||'') : '';
+  document.getElementById('productDeliverable').value = p ? (p.deliverable||'') : '';
+  document.getElementById('productUrl').value = p ? (p.url||'') : '';
+  document.getElementById('productNotes').value = p ? (p.notes||'') : '';
+}
+
+function closeProductForm() {
+  document.getElementById('productsForm').style.display = 'none';
+}
+
+let currentProductId = null;
+async function openProductDetail(id) {
+  currentProductId = id;
+  showView('productdetail', null);
+  await loadProductDetail(id);
+}
+
+async function loadProductDetail(id) {
+  try {
+    const data = await api('/api/products/' + id);
+    const p = data.product;
+    document.getElementById('pdTitle').textContent = p.name;
+    document.getElementById('pdSubtitle').textContent = (p.type || '') + (p.price != null ? ' · ' + p.currency + ' ' + p.price : '');
+    const info = document.getElementById('pdInfoBody');
+    info.innerHTML =
+      '<div><strong>Type:</strong> ' + esc(p.type || '—') + '</div>' +
+      '<div><strong>Price:</strong> ' + (p.price != null ? esc(p.currency + ' ' + p.price) : 'Free') + '</div>' +
+      '<div><strong>Audience:</strong> ' + esc(p.audience || '—') + '</div>' +
+      '<div><strong>Deliverable:</strong> ' + esc(p.deliverable || '—') + '</div>' +
+      '<div><strong>URL:</strong> ' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank">' + esc(p.url) + '</a>' : '—') + '</div>' +
+      '<div><strong>Description:</strong><br>' + esc(p.description || '—') + '</div>' +
+      (p.notes ? '<div><strong>Notes:</strong><br>' + esc(p.notes) + '</div>' : '') +
+      (p.strategy_generated_at ? '<div style="margin-top:6px;color:var(--text-muted);font-size:11px">Strategy generated: ' + esc(p.strategy_generated_at) + '</div>' : '');
+    const stratEl = document.getElementById('pdStrategy');
+    const statusEl = document.getElementById('pdStrategyStatus');
+    if (p.strategy) {
+      stratEl.textContent = p.strategy;
+      statusEl.textContent = 'Strategy available.';
+    } else {
+      stratEl.textContent = '';
+      statusEl.textContent = 'No strategy yet. Click "Create Strategy" to generate one.';
+    }
+  } catch (e) {
+    document.getElementById('pdInfoBody').innerHTML = '<div style="color:var(--err)">Error: ' + esc(String(e)) + '</div>';
+  }
+}
+
+async function createStrategy() {
+  if (!currentProductId) return;
+  const btn = document.getElementById('pdStrategyBtn');
+  const statusEl = document.getElementById('pdStrategyStatus');
+  const stratEl = document.getElementById('pdStrategy');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  statusEl.textContent = 'Generating strategy via the engine. This may take up to 2 minutes…';
+  stratEl.textContent = '';
+  try {
+    const data = await api('/api/products/' + currentProductId + '/strategy', { method: 'POST' });
+    if (data.strategy) {
+      stratEl.textContent = data.strategy;
+      statusEl.textContent = 'Strategy generated.';
+    } else if (data.error) {
+      statusEl.textContent = 'Error: ' + data.error;
+    }
+    await loadProductDetail(currentProductId);
+  } catch (e) {
+    statusEl.textContent = 'Failed: ' + e;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create Strategy';
+  }
+}
+
+async function editProduct(id) {
+  try {
+    const data = await api('/api/products/' + id);
+    openProductForm(data.product);
+  } catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+
+async function saveProduct() {
+  const id = document.getElementById('productId').value;
+  const body = {
+    name: document.getElementById('productName').value.trim(),
+    type: document.getElementById('productType').value,
+    price: document.getElementById('productPrice').value ? Number(document.getElementById('productPrice').value) : null,
+    currency: document.getElementById('productCurrency').value.trim() || 'EUR',
+    description: document.getElementById('productDescription').value.trim() || null,
+    audience: document.getElementById('productAudience').value.trim() || null,
+    deliverable: document.getElementById('productDeliverable').value.trim() || null,
+    url: document.getElementById('productUrl').value.trim() || null,
+    notes: document.getElementById('productNotes').value.trim() || null,
+  };
+  if (!body.name) { toast('Name is required', 'err'); return; }
+  try {
+    if (id) await api('/api/products/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    else await api('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Saved', 'ok');
+    closeProductForm();
+    await loadProducts();
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+
+async function deleteProduct(id) {
+  if (!confirm('Delete this product?')) return;
+  try {
+    await api('/api/products/' + id, { method:'DELETE' });
+    toast('Deleted', 'ok');
+    await loadProducts();
+  } catch(e) { toast('Delete failed: ' + e, 'err'); }
 }
 
 let peopleDebounceTimer = null;
@@ -1629,7 +1913,7 @@ async function loadSettings() {
     const body = document.getElementById('settingsBody');
     const cost = d.cost_7d || {};
     body.innerHTML = ''
-      + '<div class="section-card"><h4>Identity</h4>'
+      + '<div class="section-card" data-tab="general"><h4>Identity</h4>'
       + '<div class="field"><span class="label">Name</span><span class="value">'+esc(d.user_name||'—')+'</span></div>'
       + '<div class="field"><span class="label">Role</span><span class="value">'+esc(d.role||'—')+'</span></div>'
       + '<div class="field"><span class="label">Voice</span><span class="value">'+esc(d.voice||'—')+'</span></div>'
@@ -1645,7 +1929,7 @@ async function loadSettings() {
       + '<div class="field" style="margin-top:8px"><span class="label">MiMo key</span><span class="value">'+esc(d.mimo_key||'—')+'</span></div>'
       + '<div class="field"><span class="label">Maton key</span><span class="value">'+esc(d.maton_key||'—')+'</span></div>'
       + '</div>'
-      + '<div class="section-card"><h4>OpenCode Go plan</h4>'
+      + '<div class="section-card" data-tab="ai"><h4>OpenCode Go plan</h4>'
       + '<div class="field"><span class="label">Status</span><span class="value" id="ocgoStatus">—</span></div>'
       + '<div class="field"><span class="label">Account</span><span class="value" id="ocgoAccount">—</span></div>'
       + '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
@@ -1654,23 +1938,23 @@ async function loadSettings() {
       + '</div>'
       + '<div id="ocgoConnectBox" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Vertical</h4>'
+      + '<div class="section-card" data-tab="general"><h4>Vertical</h4>'
       + '<div class="field"><span class="label">Active</span><span class="value">'+esc(d.active_vertical||'none')+'</span></div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'+(d.verticals||[]).map(v => '<button class="btn sm '+(v===d.active_vertical?'primary':'secondary')+'" onclick="setVertical(\''+esc(v)+'\')">'+esc(v)+'</button>').join('')+'</div>'
       + '</div>'
-      + '<div class="section-card"><h4>Permission gates</h4>'
+      + '<div class="section-card" data-tab="general"><h4>Permission gates</h4>'
       + '<div class="field"><span class="value" style="font-family:var(--mono);font-size:12px">'+esc(JSON.stringify(d.permission_gates||{},null,2))+'</span></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Heartbeat</h4>'
+      + '<div class="section-card" data-tab="general"><h4>Heartbeat</h4>'
       + '<div class="field"><span class="label">Last tick</span><span class="value">'+esc(d.heartbeat_last_tick||'never')+'</span></div>'
       + '<div class="field"><span class="label">Last error</span><span class="value">'+esc(d.heartbeat_last_error||'none')+'</span></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Cost (7 days)</h4>'
+      + '<div class="section-card" data-tab="backup"><h4>Cost (7 days)</h4>'
       + '<div class="field"><span class="label">Sessions</span><span class="value">'+(cost.sessions||0)+'</span></div>'
       + '<div class="field"><span class="label">Tokens</span><span class="value">'+(cost.input_tokens||0)+' in / '+(cost.output_tokens||0)+' out</span></div>'
       + '<div class="field"><span class="label">Total</span><span class="value">$'+(cost.cost_usd||0).toFixed(4)+'</span></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Skills</h4>'
+      + '<div class="section-card" data-tab="skills"><h4>Skills</h4>'
       + '<div id="skillsList" style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">Loading…</div>'
       + '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text-secondary)">Add / edit a skill</summary>'
       + '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'
@@ -1680,7 +1964,7 @@ async function loadSettings() {
       + '<div id="skillResult" style="font-size:12px;color:var(--text-muted)"></div>'
       + '</div></details>'
       + '</div>'
-      + '<div class="section-card"><h4>MCP servers</h4>'
+      + '<div class="section-card" data-tab="skills"><h4>MCP servers</h4>'
       + '<div id="mcpList" style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">Loading…</div>'
       + '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text-secondary)">Add / edit an MCP server</summary>'
       + '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'
@@ -1693,11 +1977,11 @@ async function loadSettings() {
       + '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">Note: MCP changes require an Elitza restart to take effect.</div>'
       + '</div></details>'
       + '</div>'
-      + '<div class="section-card"><h4>Backup</h4>'
+      + '<div class="section-card" data-tab="backup"><h4>Backup</h4>'
       + '<button class="btn primary" onclick="runBackup()">Create backup now</button>'
       + '<div id="backupResult" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Cloud storage (continuous backup)</h4>'
+      + '<div class="section-card" data-tab="integrations"><h4>Cloud storage (continuous backup)</h4>'
       + '<div id="cloudAccounts" style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">Loading…</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
       + '<select id="cloudProvider" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px"><option value="dropbox">Dropbox</option><option value="google">Google Drive</option><option value="onedrive">OneDrive</option></select>'
@@ -1707,7 +1991,7 @@ async function loadSettings() {
       + '<button class="btn sm secondary" onclick="syncCloud()">Sync now</button>'
       + '<div id="cloudResult" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Maton.ai API key</h4>'
+      + '<div class="section-card" data-tab="integrations"><h4>Maton.ai API key</h4>'
       + '<div class="field"><span class="label">Status</span><span class="value" id="matonStatus">—</span></div>'
       + '<div style="display:flex;gap:6px;margin-top:8px">'
       + '<input id="matonKeyInput" type="password" placeholder="Paste MATON_API_KEY" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
@@ -1715,7 +1999,37 @@ async function loadSettings() {
       + '</div>'
       + '<div id="matonResult" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>'
       + '</div>'
-      + '<div class="section-card"><h4>Paths</h4>'
+      + '<div class="section-card" data-tab="integrations"><h4>Email (Mail)</h4>'
+      + '<div class="field"><span class="label">Resend key</span><span class="value" id="mailResendStatus">—</span></div>'
+      + '<div class="field"><span class="label">From address</span><span class="value" id="mailFromStatus">—</span></div>'
+      + '<div class="field"><span class="label">Auto-link to CRM</span><span class="value"><input type="checkbox" id="mailAutoLink" onchange="saveMailSettings()"></span></div>'
+      + '<div class="field"><span class="label">Signature</span><span class="value"><textarea id="mailSignature" rows="3" style="width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px" onchange="saveMailSettings()"></textarea></span></div>'
+      + '<div class="field"><span class="label">Inbound webhook</span><span class="value mono" style="font-size:11px">POST http://127.0.0.1:'+d.crm_port+'/api/mail/inbound</span></div>'
+      + '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">Configure the Resend key and from-address in the Setup wizard. Emails auto-link to clients by address when enabled.</div>'
+      + '</div>'
+      + '<div class="section-card" data-tab="integrations"><h4>Google Workspace (Gmail)</h4>'
+      + '<div id="gmailAccounts" style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">Loading…</div>'
+      + '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:12px;color:var(--text-secondary)">One-click Google login (OAuth)</summary>'
+      + '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'
+      + '<input id="gClientId" placeholder="Google OAuth Client ID" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
+      + '<input id="gClientSecret" type="password" placeholder="Google OAuth Client Secret" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
+      + '<div style="display:flex;gap:6px"><button class="btn sm primary" onclick="saveGoogleOAuth()">Save OAuth config</button><button class="btn sm" onclick="loginGoogle()">Login with Google</button></div>'
+      + '<div id="gOAuthStatus" style="font-size:11px;color:var(--text-muted)"></div>'
+      + '</div></details>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+      + '<input id="gmailToken" type="password" placeholder="Or paste a Gmail API access token (mail scopes)" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
+      + '<input id="gmailLabel" placeholder="Label (e.g. you@yourdomain.com)" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">'
+      + '<button class="btn sm primary" onclick="connectGmail()">Connect</button>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+      + '<button class="btn sm secondary" onclick="syncGmail()">Sync now</button>'
+      + '<select id="gmailSyncAccount" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px"></select>'
+      + '<select id="gmailSyncLimit" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px"><option value="50">50</option><option value="100">100</option><option value="200">200</option></select>'
+      + '</div>'
+      + '<div id="gmailResult" style="font-size:12px;color:var(--text-muted)"></div>'
+      + '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">Get an access token with Gmail scopes from Google OAuth Playground or your Workspace admin. Tokens expire; reconnect when sync fails.</div>'
+      + '</div>'
+      + '<div class="section-card" data-tab="general"><h4>Paths</h4>'
       + '<div class="field"><span class="label">Elitza home</span><span class="value mono" style="font-size:11px">'+esc(d.elitza_home)+'</span></div>'
       + '<div class="field"><span class="label">CRM port</span><span class="value">'+d.crm_port+'</span></div>'
       + '</div>';
@@ -1725,7 +2039,24 @@ async function loadSettings() {
   loadMcp();
   loadModelOptions(d.provider || 'opencode-go', d.model || 'beam-free');
   loadVariantOptions(d.model || 'beam-free', d.variant || '');
+  loadMailSettings();
+  loadGmailAccounts();
+  loadGoogleOAuthConfig();
+  switchSettingsTab('general');
   } catch(e) { document.getElementById('settingsBody').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
+}
+
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab').forEach(b => {
+    const active = b.getAttribute('data-tab') === tab;
+    b.classList.toggle('primary', active);
+    b.classList.toggle('secondary', !active);
+    b.classList.toggle('active', active);
+  });
+  document.querySelectorAll('#settingsBody .section-card').forEach(card => {
+    const t = card.getAttribute('data-tab') || 'general';
+    card.style.display = (t === tab) ? '' : 'none';
+  });
 }
 
 async function loadModelOptions(provider, currentModel) {
@@ -1831,12 +2162,108 @@ async function saveMatonKey() {
     loadMatonStatus();
   } catch (e) { toast('Failed: ' + e, 'err'); }
 }
+async function loadMailSettings() {
+  try {
+    const s = await api('/api/settings/secrets-status');
+    const el1 = document.getElementById('mailResendStatus');
+    if (el1) el1.textContent = s.resend ? 'Set (mode 600)' : 'Not set';
+    const el2 = document.getElementById('mailFromStatus');
+    if (el2) el2.textContent = s.resend_from ? 'Set' : 'Not set';
+  } catch (e) {}
+  try {
+    const m = await api('/api/settings/mail');
+    const cb = document.getElementById('mailAutoLink');
+    if (cb) cb.checked = !!m.auto_link;
+    const ta = document.getElementById('mailSignature');
+    if (ta) ta.value = m.signature || '';
+  } catch (e) {}
+}
+async function saveMailSettings() {
+  const cb = document.getElementById('mailAutoLink');
+  const ta = document.getElementById('mailSignature');
+  try {
+    await api('/api/settings/mail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto_link: cb ? cb.checked : true, signature: ta ? ta.value : '' }) });
+    toast('Mail settings saved', 'ok');
+  } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+async function loadGmailAccounts() {
+  try {
+    const d = await api('/api/mail/gmail/accounts');
+    const el = document.getElementById('gmailAccounts');
+    const sel = document.getElementById('gmailSyncAccount');
+    const accs = d.accounts || [];
+    if (el) el.innerHTML = accs.length ? accs.map(a => '<div style="display:flex;align-items:center;gap:8px;padding:4px 0"><span>' + esc(a.account_label || 'account #' + a.id) + '</span><span style="color:var(--text-muted);font-size:11px">' + esc(a.status) + (a.last_sync ? ' · synced ' + esc(a.last_sync.slice(0,16).replace('T',' ')) : '') + (a.last_error ? ' · err: ' + esc(a.last_error) : '') + '</span><button class="btn sm danger" style="margin-left:auto" onclick="disconnectGmail(' + a.id + ')">Disconnect</button></div>').join('') : 'No Gmail accounts connected.';
+    if (sel) sel.innerHTML = accs.map(a => '<option value="' + a.id + '">' + esc(a.account_label || ('#' + a.id)) + '</option>').join('');
+  } catch (e) {}
+}
+async function connectGmail() {
+  const token = document.getElementById('gmailToken').value.trim();
+  const label = document.getElementById('gmailLabel').value.trim();
+  if (!token) { toast('Access token required', 'err'); return; }
+  try {
+    await api('/api/mail/gmail/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ access_token: token, label }) });
+    document.getElementById('gmailToken').value = '';
+    document.getElementById('gmailLabel').value = '';
+    toast('Gmail connected', 'ok');
+    loadGmailAccounts();
+  } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+async function disconnectGmail(id) {
+  if (!confirm('Disconnect this Gmail account?')) return;
+  try { await api('/api/mail/gmail/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); toast('Disconnected', 'ok'); loadGmailAccounts(); } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+async function syncGmail() {
+  const sel = document.getElementById('gmailSyncAccount');
+  const id = sel ? Number(sel.value) : 0;
+  if (!id) { toast('No account selected', 'err'); return; }
+  const limit = Number(document.getElementById('gmailSyncLimit')?.value || 50);
+  const res = document.getElementById('gmailResult');
+  if (res) res.textContent = 'Syncing…';
+  try {
+    const r = await api('/api/mail/gmail/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: id, limit }) });
+    if (res) res.textContent = 'Imported ' + r.imported + ' messages.';
+    toast('Synced ' + r.imported, 'ok');
+    loadGmailAccounts();
+    loadMail();
+  } catch (e) { if (res) res.textContent = 'Sync failed: ' + e; toast('Sync failed: ' + e, 'err'); }
+}
+async function loadGoogleOAuthConfig() {
+  try {
+    const c = await api('/api/mail/gmail/oauth-config');
+    const el = document.getElementById('gClientId');
+    if (el && c.client_id) el.value = c.client_id;
+    const st = document.getElementById('gOAuthStatus');
+    if (st) st.textContent = c.client_id ? ('Configured' + (c.client_secret_set ? ' (secret set)' : ' (no secret)')) : 'Not configured';
+  } catch (e) {}
+}
+async function saveGoogleOAuth() {
+  const cid = document.getElementById('gClientId').value.trim();
+  const csecret = document.getElementById('gClientSecret').value.trim();
+  if (!cid) { toast('Client ID required', 'err'); return; }
+  try {
+    await api('/api/mail/gmail/oauth-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: cid, client_secret: csecret }) });
+    document.getElementById('gClientSecret').value = '';
+    toast('OAuth config saved', 'ok');
+    loadGoogleOAuthConfig();
+  } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+async function loginGoogle() {
+  try {
+    const r = await api('/api/mail/gmail/auth-url');
+    window.open(r.url, '_blank');
+    toast('Complete authorization in the opened window, then return here.', 'ok');
+  } catch (e) { toast('Failed: ' + e, 'err'); }
+}
+// handle redirect result
+if (window.location.search.includes('gmail=connected')) {
+  setTimeout(() => { toast('Google Workspace connected', 'ok'); history.replaceState({}, '', window.location.pathname); loadGmailAccounts(); loadMail(); }, 500);
+}
 
 const WIZARD_KEYS = [
   { name: 'XIAOMI_API_KEY', label: 'Xiaomi MiMo API key', desc: 'Powers the AI model (MiMo v2.6 Flash). Required.', link: 'https://platform.xiaomimimo.com', affiliate: 'Invite code HFSR94 — 10% off first paid Token Plan', required: true, target: 'env' },
   { name: 'GOOGLE_MAPS_API_KEY', label: 'Google Maps / Places API key', desc: 'Used by scouting to find local businesses. Optional but recommended.', link: 'https://console.cloud.google.com/apis/credentials', required: false, target: 'env' },
   { name: 'RESEND_API_KEY', label: 'Resend API key', desc: 'Sends outreach emails (only after your approval). Optional.', link: 'https://resend.com/api-keys', required: false, target: 'env' },
-  { name: 'RESEND_FROM', label: 'Resend from address', desc: 'Verified sender address, e.g. you@yourdomain.com. Required if using Resend.', link: 'https://resend.com/domains', required: false, target: 'env' },
+  { name: 'RESEND_FROM', label: 'Resend from address', desc: 'Verified sender address. Format: Dario Cositore <hello@yourdomain.com> or just hello@yourdomain.com. Required if using Resend.', link: 'https://resend.com/domains', required: false, target: 'env', masked: false },
   { name: 'MATON_API_KEY', label: 'Maton.ai API key', desc: 'Gateway for GitHub and other integrations. Optional.', link: 'https://maton.ai', required: false, target: 'maton' },
 ];
 
@@ -1867,7 +2294,7 @@ async function renderWizard() {
       (k.affiliate ? '<div style="font-size:11px;color:var(--accent);margin-bottom:6px">' + esc(k.affiliate) + '</div>' : '') +
       '<div style="font-size:11px;margin-bottom:6px"><a href="' + esc(k.link) + '" target="_blank" style="color:var(--accent)">Get key ↗</a></div>' +
       '<div style="display:flex;gap:6px">' +
-      '<input id="wiz_' + k.name + '" type="password" placeholder="Paste ' + esc(k.name) + '" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">' +
+      '<input id="wiz_' + k.name + '" type="' + (k.masked === false ? 'text' : 'password') + '" placeholder="Paste ' + esc(k.name) + '" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;color:var(--text);font-size:12px">' +
       '<button class="btn sm primary" onclick="saveWizardKey(\'' + k.name + '\',\'' + k.target + '\')">Save</button>' +
       '</div>' +
       '</div>';
@@ -2148,7 +2575,7 @@ async function openDetail(id) {
     + '</div>'
     + '<div class="section-card" style="margin-top:10px"><h4>Communication</h4>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
-    + (c.email?'<a class="btn secondary sm" href="mailto:'+esc(c.email)+'?subject='+encodeURIComponent('Re: '+c.name)+'">✉ Email</a>':'<button class="btn secondary sm" disabled title="No email on file">✉ Email</button>')
+    + (c.email?'<button class="btn secondary sm" onclick="composeMail({to:\''+esc(c.email)+'\',subject:\'Re: '+esc(c.name)+'\'})">✉ Email</button>':'<button class="btn secondary sm" disabled title="No email on file">✉ Email</button>')
     + (c.phone?'<a class="btn secondary sm" href="tel:'+esc(c.phone.replace(/\s/g,''))+'">📞 Call</a>':'<button class="btn secondary sm" disabled title="No phone on file">📞 Call</button>')
     + '<button class="btn secondary sm" onclick="logNote('+c.id+')">📝 Log note</button>'
     + '</div></div>'
@@ -3092,5 +3519,201 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 </div>
 
+<script>
+// ---- Mail ----
+let mailFolder = 'inbox';
+let mailEmails = [];
+let mailCurrent = null;
+let mailSearchTimer = null;
+function mailSetFolder(f) {
+  mailFolder = f;
+  document.querySelectorAll('.mail-folder').forEach(b => b.classList.toggle('active', b.dataset.folder === f));
+  loadMail();
+}
+async function loadMail() {
+  const q = (document.getElementById('mailSearch')?.value || '').trim();
+  try {
+    const data = await api('/api/emails' + (mailFolder === 'all' ? '' : '?folder=' + encodeURIComponent(mailFolder)) + (q ? (mailFolder === 'all' ? '?' : '&') + 'q=' + encodeURIComponent(q) : ''));
+    mailEmails = data.emails || [];
+    renderMailList();
+    updateMailCounts(data.counts || await api('/api/emails/counts'));
+    const badge = document.getElementById('mailBadge');
+    const unread = (data.counts || {}).unread || 0;
+    if (badge) { badge.textContent = unread || ''; badge.style.display = unread ? '' : 'none'; }
+    // auto-sync gmail in background if connected
+    scheduleGmailAutoSync();
+  } catch (e) { toast('Failed to load mail', 'err'); }
+}
+let _gmailSyncScheduled = false;
+function scheduleGmailAutoSync() {
+  if (_gmailSyncScheduled) return;
+  _gmailSyncScheduled = true;
+  setTimeout(async () => {
+    _gmailSyncScheduled = false;
+    try {
+      const ga = await api('/api/mail/gmail/accounts');
+      if (ga.accounts && ga.accounts.length) {
+        for (const a of ga.accounts) {
+          try { await api('/api/mail/gmail/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, limit: 50 }) }); } catch (e) {}
+        }
+        loadMail();
+      }
+    } catch (e) {}
+  }, 2000);
+}
+setInterval(() => { scheduleGmailAutoSync(); }, 5 * 60 * 1000);
+function debounceMailSearch() {
+  clearTimeout(mailSearchTimer);
+  mailSearchTimer = setTimeout(loadMail, 250);
+}
+function updateMailCounts(c) {
+  const map = { inbox: c.inbox, starred: c.starred, sent: c.sent, drafts: c.drafts, trash: c.trash, all: c.all };
+  for (const k in map) {
+    const el = document.getElementById('mailCount-' + k);
+    if (el) el.textContent = map[k] ? map[k] : '';
+  }
+}
+function renderMailList() {
+  const el = document.getElementById('mailList');
+  if (!mailEmails.length) { el.innerHTML = '<div class="empty-state" style="padding:24px"><p>No messages.</p></div>'; return; }
+  el.innerHTML = mailEmails.map(e => {
+    const unread = !e.is_read && e.folder === 'inbox';
+    const star = e.is_starred ? '★' : '☆';
+    const fromto = e.direction === 'in' ? (e.from_addr || '—') : ('To: ' + (e.to_addr || '—'));
+    const snippet = (e.body || '').slice(0, 80).replace(/\\n/g, ' ');
+    const date = (e.occurred_at || '').slice(0, 16).replace('T', ' ');
+    const link = e.client_id ? ' · <span style="color:var(--accent)">linked</span>' : '';
+    return '<div class="mail-row ' + (unread ? 'unread' : '') + '" onclick="openMail(' + e.id + ')">'
+      + '<div style="text-align:center;cursor:pointer" onclick="event.stopPropagation();toggleStar(' + e.id + ')">' + star + '</div>'
+      + '<div style="min-width:0">'
+      + '<div class="subj">' + esc(e.subject || '(no subject)') + '</div>'
+      + '<div class="snippet">' + esc(fromto) + (snippet ? ' — ' + esc(snippet) : '') + link + '</div>'
+      + '</div>'
+      + '<div class="meta">' + esc(date) + '</div>'
+      + '</div>';
+  }).join('');
+}
+async function openMail(id) {
+  try {
+    const data = await api('/api/emails/' + id);
+    mailCurrent = data.email;
+    renderMailDetail();
+  } catch (e) { toast('Failed to open email', 'err'); }
+}
+function renderMailDetail() {
+  const e = mailCurrent;
+  const el = document.getElementById('mailDetail');
+  if (!e) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const date = (e.occurred_at || '').replace('T', ' ');
+  el.innerHTML = '<div class="mail-detail">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+    + '<button class="btn sm secondary" onclick="closeMailDetail()">← Back</button>'
+    + '<h2 style="flex:1">' + esc(e.subject || '(no subject)') + '</h2>'
+    + '<button class="btn sm secondary" onclick="toggleStar(' + e.id + ')">' + (e.is_starred ? '★ Unstar' : '☆ Star') + '</button>'
+    + '<button class="btn sm danger" onclick="deleteMail(' + e.id + ')">🗑</button>'
+    + '</div>'
+    + '<div class="hdr">'
+    + '<div><strong>From:</strong> ' + esc(e.from_addr || '—') + '</div>'
+    + '<div><strong>To:</strong> ' + esc(e.to_addr || '—') + (e.cc ? ' · <strong>Cc:</strong> ' + esc(e.cc) : '') + '</div>'
+    + '<div><strong>Date:</strong> ' + esc(date) + (e.client_id ? ' · <strong>Linked client:</strong> #' + e.client_id : '') + (e.company ? ' (' + esc(e.company) + ')' : '') + '</div>'
+    + '</div>'
+    + '<div class="body">' + esc(e.body || '') + '</div>'
+    + '<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">'
+    + '<button class="btn sm" onclick="composeMail({replyTo:' + e.id + '})">Reply</button>'
+    + '<button class="btn sm secondary" onclick="composeMail({forward:' + e.id + '})">Forward</button>'
+    + (e.client_id ? '<button class="btn sm secondary" onclick="openDetail(' + e.client_id + ')">Open client</button>' : '')
+    + '</div></div>';
+}
+function closeMailDetail() { mailCurrent = null; document.getElementById('mailDetail').style.display = 'none'; }
+async function toggleStar(id) {
+  const e = mailEmails.find(x => x.id === id) || mailCurrent;
+  if (!e) return;
+  try { await api('/api/emails/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_starred: e.is_starred ? 0 : 1 }) }); loadMail(); if (mailCurrent && mailCurrent.id === id) openMail(id); } catch (err) { toast('Failed', 'err'); }
+}
+async function deleteMail(id) {
+  if (!confirm('Delete this email?')) return;
+  try { await api('/api/emails/' + id, { method: 'DELETE' }); toast('Moved to trash', 'ok'); closeMailDetail(); loadMail(); } catch (e) { toast('Failed', 'err'); }
+}
+let composeState = null;
+function composeMail(opts) {
+  opts = opts || {};
+  let to = '', subject = '', body = '', replyTo = null, forward = null;
+  if (opts.replyTo) {
+    const e = mailEmails.find(x => x.id === opts.replyTo) || mailCurrent;
+    if (e) { replyTo = e.id; to = e.direction === 'in' ? (e.from_addr || '') : (e.to_addr || ''); subject = (e.subject || '').startsWith('Re:') ? e.subject : 'Re: ' + (e.subject || ''); body = '\\n\\n--- On ' + (e.occurred_at || '') + ' ' + (e.from_addr || '') + ' wrote ---\\n' + (e.body || ''); }
+  } else if (opts.forward) {
+    const e = mailEmails.find(x => x.id === opts.forward) || mailCurrent;
+    if (e) { forward = e.id; subject = (e.subject || '').startsWith('Fwd:') ? e.subject : 'Fwd: ' + (e.subject || ''); body = '\\n\\n--- Forwarded message ---\\nFrom: ' + (e.from_addr || '') + '\\nSubject: ' + (e.subject || '') + '\\n\\n' + (e.body || ''); }
+  } else if (opts.to) { to = opts.to; }
+  if (opts.subject) subject = opts.subject;
+  if (opts.body) body = opts.body;
+  composeState = { replyTo, forward };
+  const overlay = document.createElement('div');
+  overlay.className = 'compose-overlay';
+  overlay.id = 'composeOverlay';
+  overlay.innerHTML = '<div class="compose-card">'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><strong style="flex:1">Compose</strong><button class="btn sm secondary" onclick="closeCompose()">✕</button></div>'
+    + '<input id="cmpTo" placeholder="To" value="' + esc(to) + '">'
+    + '<input id="cmpCc" placeholder="Cc (optional)">'
+    + '<input id="cmpBcc" placeholder="Bcc (optional)">'
+    + '<input id="cmpSubject" placeholder="Subject" value="' + esc(subject) + '">'
+    + '<textarea id="cmpBody" placeholder="Message">' + esc(body) + '</textarea>'
+    + '<div style="display:flex;gap:6px;justify-content:flex-end">'
+    + '<button class="btn secondary sm" onclick="saveDraftCompose()">Save draft</button>'
+    + '<button class="btn sm" onclick="sendCompose()">Send</button>'
+    + '</div></div>';
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeCompose(); });
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('cmpTo').focus(), 50);
+}
+function closeCompose() { const el = document.getElementById('composeOverlay'); if (el) el.remove(); composeState = null; }
+async function sendCompose() {
+  const to = document.getElementById('cmpTo').value.trim();
+  const cc = document.getElementById('cmpCc').value.trim();
+  const bcc = document.getElementById('cmpBcc').value.trim();
+  const subject = document.getElementById('cmpSubject').value.trim();
+  const body = document.getElementById('cmpBody').value;
+  if (!to) { toast('Recipient required', 'err'); return; }
+  try {
+    let gmailAcc = null;
+    try { const ga = await api('/api/mail/gmail/accounts'); if (ga.accounts && ga.accounts.length) gmailAcc = ga.accounts[0]; } catch (e) {}
+    let r;
+    if (gmailAcc) {
+      r = await api('/api/mail/gmail/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: gmailAcc.id, to, cc: cc || undefined, bcc: bcc || undefined, subject, body, client_id: null }) });
+    } else {
+      const payload = { to, cc: cc || undefined, bcc: bcc || undefined, subject, body, send: true, in_reply_to: composeState?.replyTo || undefined };
+      r = await api('/api/emails/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    }
+    toast('Sent', 'ok');
+    closeCompose();
+    loadMail();
+    if (r.email?.client_id) { /* linked */ }
+  } catch (e) { toast('Send failed: ' + e, 'err'); }
+}
+async function saveDraftCompose() {
+  const to = document.getElementById('cmpTo').value.trim();
+  const cc = document.getElementById('cmpCc').value.trim();
+  const bcc = document.getElementById('cmpBcc').value.trim();
+  const subject = document.getElementById('cmpSubject').value.trim();
+  const body = document.getElementById('cmpBody').value;
+  try {
+    await api('/api/emails/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: to || '(draft)', cc: cc || undefined, bcc: bcc || undefined, subject, body, send: false }) });
+    toast('Draft saved', 'ok');
+    closeCompose();
+    loadMail();
+  } catch (e) { toast('Save failed: ' + e, 'err'); }
+}
+// update badge on load
+setTimeout(() => { try { loadMailCounts(); } catch (e) {} }, 1000);
+async function loadMailCounts() {
+  try {
+    const c = await api('/api/emails/counts');
+    const badge = document.getElementById('mailBadge');
+    const unread = c.unread || 0;
+    if (badge) { badge.textContent = unread || ''; badge.style.display = unread ? '' : 'none'; }
+  } catch (e) {}
+}
+</script>
 </body>
 </html>
