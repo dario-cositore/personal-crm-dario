@@ -316,6 +316,63 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS products_type ON products(type);
   CREATE INDEX IF NOT EXISTS products_name ON products(name);
+
+  CREATE TABLE IF NOT EXISTS mkt_email_campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'broadcast',
+      status TEXT NOT NULL DEFAULT 'draft',
+      subject TEXT,
+      body TEXT,
+      audience TEXT,
+      segment_id INTEGER,
+      product_id INTEGER,
+      scheduled_at TEXT,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      open_count INTEGER NOT NULL DEFAULT 0,
+      click_count INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mkt_email_campaigns_status ON mkt_email_campaigns(status);
+
+  CREATE TABLE IF NOT EXISTS mkt_ads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'meta',
+      status TEXT NOT NULL DEFAULT 'draft',
+      budget REAL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      spend REAL NOT NULL DEFAULT 0,
+      impressions INTEGER NOT NULL DEFAULT 0,
+      clicks INTEGER NOT NULL DEFAULT 0,
+      conversions INTEGER NOT NULL DEFAULT 0,
+      start_date TEXT,
+      end_date TEXT,
+      product_id INTEGER,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mkt_ads_status ON mkt_ads(status);
+  CREATE INDEX IF NOT EXISTS mkt_ads_platform ON mkt_ads(platform);
+
+  CREATE TABLE IF NOT EXISTS mkt_content (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'linkedin',
+      status TEXT NOT NULL DEFAULT 'idea',
+      content TEXT,
+      scheduled_date TEXT,
+      published_url TEXT,
+      product_id INTEGER,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mkt_content_status ON mkt_content(status);
+  CREATE INDEX IF NOT EXISTS mkt_content_platform ON mkt_content(platform);
 `
 /** A row shipped before this column existed must gain it, or the cadence reads null. */
 function migrate(db: Database): void {
@@ -1789,6 +1846,147 @@ export function weeklyDigest(): string {
   lines.push("## Deals")
   lines.push(`- Open: ${r.open_deals}, Won: ${r.won_deals}`)
   return lines.join("\\n")
+}
+
+// ---------------------------------------------------------------------------
+// Marketing — Email Campaigns, Ads, Content Calendar
+// ---------------------------------------------------------------------------
+
+export interface MktEmailCampaign {
+  id: number; name: string; type: string; status: string;
+  subject: string | null; body: string | null; audience: string | null;
+  segment_id: number | null; product_id: number | null; scheduled_at: string | null;
+  sent_count: number; open_count: number; click_count: number; notes: string | null;
+  created_at: string; updated_at: string;
+}
+export interface MktEmailCampaignInput {
+  name: string; type?: string; status?: string; subject?: string | null; body?: string | null;
+  audience?: string | null; segment_id?: number | null; product_id?: number | null;
+  scheduled_at?: string | null; notes?: string | null;
+}
+export function addMktEmailCampaign(input: MktEmailCampaignInput): MktEmailCampaign {
+  const db = crmDb(); const now = nowISO();
+  const res = db.run(`INSERT INTO mkt_email_campaigns (name,type,status,subject,body,audience,segment_id,product_id,scheduled_at,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [input.name, input.type ?? 'broadcast', input.status ?? 'draft', input.subject ?? null, input.body ?? null, input.audience ?? null, input.segment_id ?? null, input.product_id ?? null, input.scheduled_at ?? null, input.notes ?? null, now, now]);
+  return getMktEmailCampaign(Number(res.lastInsertRowid))!;
+}
+export function getMktEmailCampaign(id: number): MktEmailCampaign | null {
+  const row = crmDb().query('SELECT * FROM mkt_email_campaigns WHERE id = ?').get(id) as any;
+  return row ? row as MktEmailCampaign : null;
+}
+export function listMktEmailCampaigns(status?: string): MktEmailCampaign[] {
+  const db = crmDb();
+  if (status) return db.query('SELECT * FROM mkt_email_campaigns WHERE status = ? ORDER BY updated_at DESC').all(status) as MktEmailCampaign[];
+  return db.query('SELECT * FROM mkt_email_campaigns ORDER BY updated_at DESC').all() as MktEmailCampaign[];
+}
+export function updateMktEmailCampaign(id: number, patch: any): MktEmailCampaign | null {
+  const db = crmDb(); const existing = getMktEmailCampaign(id); if (!existing) return null;
+  const now = nowISO();
+  const fields: string[] = []; const values: any[] = [];
+  const updatable = ['name','type','status','subject','body','audience','segment_id','product_id','scheduled_at','sent_count','open_count','click_count','notes'];
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
+  }
+  if (!fields.length) return existing;
+  fields.push('updated_at = ?'); values.push(now); values.push(id);
+  db.run(`UPDATE mkt_email_campaigns SET ${fields.join(', ')} WHERE id = ?`, values);
+  return getMktEmailCampaign(id);
+}
+export function deleteMktEmailCampaign(id: number): boolean {
+  const res = crmDb().run('DELETE FROM mkt_email_campaigns WHERE id = ?', [id]);
+  return (res.changes ?? 0) > 0;
+}
+
+export interface MktAd {
+  id: number; name: string; platform: string; status: string;
+  budget: number | null; currency: string; spend: number; impressions: number; clicks: number; conversions: number;
+  start_date: string | null; end_date: string | null; product_id: number | null; notes: string | null;
+  created_at: string; updated_at: string;
+}
+export interface MktAdInput {
+  name: string; platform?: string; status?: string; budget?: number | null; currency?: string;
+  spend?: number; impressions?: number; clicks?: number; conversions?: number;
+  start_date?: string | null; end_date?: string | null; product_id?: number | null; notes?: string | null;
+}
+export function addMktAd(input: MktAdInput): MktAd {
+  const db = crmDb(); const now = nowISO();
+  const res = db.run(`INSERT INTO mkt_ads (name,platform,status,budget,currency,spend,impressions,clicks,conversions,start_date,end_date,product_id,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [input.name, input.platform ?? 'meta', input.status ?? 'draft', input.budget ?? null, input.currency ?? 'USD', input.spend ?? 0, input.impressions ?? 0, input.clicks ?? 0, input.conversions ?? 0, input.start_date ?? null, input.end_date ?? null, input.product_id ?? null, input.notes ?? null, now, now]);
+  return getMktAd(Number(res.lastInsertRowid))!;
+}
+export function getMktAd(id: number): MktAd | null {
+  const row = crmDb().query('SELECT * FROM mkt_ads WHERE id = ?').get(id) as any;
+  return row ? row as MktAd : null;
+}
+export function listMktAds(status?: string, platform?: string): MktAd[] {
+  const db = crmDb();
+  const conds: string[] = []; const vals: any[] = [];
+  if (status) { conds.push('status = ?'); vals.push(status); }
+  if (platform) { conds.push('platform = ?'); vals.push(platform); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  return db.query(`SELECT * FROM mkt_ads ${where} ORDER BY updated_at DESC`).all(...vals) as MktAd[];
+}
+export function updateMktAd(id: number, patch: any): MktAd | null {
+  const db = crmDb(); const existing = getMktAd(id); if (!existing) return null;
+  const now = nowISO();
+  const fields: string[] = []; const values: any[] = [];
+  const updatable = ['name','platform','status','budget','currency','spend','impressions','clicks','conversions','start_date','end_date','product_id','notes'];
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
+  }
+  if (!fields.length) return existing;
+  fields.push('updated_at = ?'); values.push(now); values.push(id);
+  db.run(`UPDATE mkt_ads SET ${fields.join(', ')} WHERE id = ?`, values);
+  return getMktAd(id);
+}
+export function deleteMktAd(id: number): boolean {
+  const res = crmDb().run('DELETE FROM mkt_ads WHERE id = ?', [id]);
+  return (res.changes ?? 0) > 0;
+}
+
+export interface MktContent {
+  id: number; title: string; platform: string; status: string;
+  content: string | null; scheduled_date: string | null; published_url: string | null;
+  product_id: number | null; notes: string | null; created_at: string; updated_at: string;
+}
+export interface MktContentInput {
+  title: string; platform?: string; status?: string; content?: string | null;
+  scheduled_date?: string | null; published_url?: string | null; product_id?: number | null; notes?: string | null;
+}
+export function addMktContent(input: MktContentInput): MktContent {
+  const db = crmDb(); const now = nowISO();
+  const res = db.run(`INSERT INTO mkt_content (title,platform,status,content,scheduled_date,published_url,product_id,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [input.title, input.platform ?? 'linkedin', input.status ?? 'idea', input.content ?? null, input.scheduled_date ?? null, input.published_url ?? null, input.product_id ?? null, input.notes ?? null, now, now]);
+  return getMktContent(Number(res.lastInsertRowid))!;
+}
+export function getMktContent(id: number): MktContent | null {
+  const row = crmDb().query('SELECT * FROM mkt_content WHERE id = ?').get(id) as any;
+  return row ? row as MktContent : null;
+}
+export function listMktContent(status?: string, platform?: string): MktContent[] {
+  const db = crmDb();
+  const conds: string[] = []; const vals: any[] = [];
+  if (status) { conds.push('status = ?'); vals.push(status); }
+  if (platform) { conds.push('platform = ?'); vals.push(platform); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  return db.query(`SELECT * FROM mkt_content ${where} ORDER BY COALESCE(scheduled_date, created_at) DESC`).all(...vals) as MktContent[];
+}
+export function updateMktContent(id: number, patch: any): MktContent | null {
+  const db = crmDb(); const existing = getMktContent(id); if (!existing) return null;
+  const now = nowISO();
+  const fields: string[] = []; const values: any[] = [];
+  const updatable = ['title','platform','status','content','scheduled_date','published_url','product_id','notes'];
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
+  }
+  if (!fields.length) return existing;
+  fields.push('updated_at = ?'); values.push(now); values.push(id);
+  db.run(`UPDATE mkt_content SET ${fields.join(', ')} WHERE id = ?`, values);
+  return getMktContent(id);
+}
+export function deleteMktContent(id: number): boolean {
+  const res = crmDb().run('DELETE FROM mkt_content WHERE id = ?', [id]);
+  return (res.changes ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------
