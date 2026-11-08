@@ -263,8 +263,60 @@ const SCHEMA = `
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS segments_name ON segments(name);
-`
 
+  -- Mail: a Gmail-like store for all email (inbox/sent/drafts/trash) with
+  -- auto-linking to CRM clients/orgs by address.
+  CREATE TABLE IF NOT EXISTS emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      folder TEXT NOT NULL DEFAULT 'inbox',
+      direction TEXT NOT NULL DEFAULT 'in',
+      from_addr TEXT,
+      to_addr TEXT,
+      cc TEXT,
+      bcc TEXT,
+      subject TEXT,
+      body TEXT,
+      html TEXT,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+      company TEXT,
+      thread_id TEXT,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      is_starred INTEGER NOT NULL DEFAULT 0,
+      labels TEXT,
+      resend_id TEXT,
+      in_reply_to INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+      has_attachments INTEGER NOT NULL DEFAULT 0,
+      gmail_id TEXT,
+      provider TEXT NOT NULL DEFAULT 'local'
+  );
+  CREATE INDEX IF NOT EXISTS emails_folder ON emails(folder);
+  CREATE INDEX IF NOT EXISTS emails_client ON emails(client_id);
+  CREATE INDEX IF NOT EXISTS emails_occurred ON emails(occurred_at);
+  CREATE INDEX IF NOT EXISTS emails_thread ON emails(thread_id);
+
+  CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'product',
+      description TEXT,
+      price INTEGER,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      url TEXT,
+      audience TEXT,
+      deliverable TEXT,
+      notes TEXT,
+      strategy TEXT,
+      strategy_generated_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS products_type ON products(type);
+  CREATE INDEX IF NOT EXISTS products_name ON products(name);
+`
 /** A row shipped before this column existed must gain it, or the cadence reads null. */
 function migrate(db: Database): void {
   const pipelineCols = db.query("PRAGMA table_info(pipeline)").all() as { name: string }[]
@@ -274,6 +326,16 @@ function migrate(db: Database): void {
   if (!pipelineCols.some((column) => column.name === "variant")) {
     db.exec("ALTER TABLE pipeline ADD COLUMN variant TEXT")
   }
+  // emails table migrations
+  try {
+    const emailCols = db.query("PRAGMA table_info(emails)").all() as { name: string }[]
+    if (emailCols.length && !emailCols.some((c) => c.name === "gmail_id")) {
+      db.exec("ALTER TABLE emails ADD COLUMN gmail_id TEXT")
+    }
+    if (emailCols.length && !emailCols.some((c) => c.name === "provider")) {
+      db.exec("ALTER TABLE emails ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'")
+    }
+  } catch {}
   const clientCols = db.query("PRAGMA table_info(clients)").all() as { name: string }[]
   const newCols: { name: string; type: string }[] = [
     { name: "linkedin", type: "TEXT" },
@@ -297,6 +359,16 @@ function migrate(db: Database): void {
       db.exec(`ALTER TABLE clients ADD COLUMN ${col.name} ${col.type}`)
     }
   }
+  // Products strategy columns (added with the System Strategy feature).
+  try {
+    const productCols = db.query("PRAGMA table_info(products)").all() as { name: string }[]
+    if (productCols.length && !productCols.some((c) => c.name === "strategy")) {
+      db.exec("ALTER TABLE products ADD COLUMN strategy TEXT")
+    }
+    if (productCols.length && !productCols.some((c) => c.name === "strategy_generated_at")) {
+      db.exec("ALTER TABLE products ADD COLUMN strategy_generated_at TEXT")
+    }
+  } catch { /* products table may not exist yet */ }
 }
 
 let instance: Database | undefined
@@ -411,6 +483,57 @@ export interface InteractionInput {
   subject?: string
   body?: string
   occurred_at?: string
+}
+
+export interface Email {
+  id: number
+  folder: string
+  direction: string
+  from_addr: string | null
+  to_addr: string | null
+  cc: string | null
+  bcc: string | null
+  subject: string | null
+  body: string | null
+  html: string | null
+  occurred_at: string
+  created_at: string
+  updated_at: string
+  client_id: number | null
+  company: string | null
+  thread_id: string | null
+  is_read: number
+  is_starred: number
+  labels: string | null
+  resend_id: string | null
+  gmail_id: string | null
+  provider: string
+  in_reply_to: number | null
+  has_attachments: number
+}
+
+export interface EmailInput {
+  folder?: string
+  direction?: string
+  from_addr?: string
+  to_addr?: string
+  cc?: string
+  bcc?: string
+  subject?: string
+  body?: string
+  html?: string
+  occurred_at?: string
+  client_id?: number | null
+  company?: string
+  thread_id?: string
+  is_read?: number
+  is_starred?: number
+  labels?: string
+  resend_id?: string
+  gmail_id?: string
+  provider?: string
+  in_reply_to?: number | null
+  has_attachments?: number
 }
 
 export interface ClientAsset {
@@ -883,6 +1006,148 @@ export function listInteractions(clientId: number): Interaction[] {
     "SELECT * FROM client_interactions WHERE client_id = ? ORDER BY occurred_at DESC, id DESC",
     [clientId],
   )
+}
+
+// ---------------------------------------------------------------------------
+// Mail
+// ---------------------------------------------------------------------------
+
+export function findClientByEmail(email: string | null | undefined): Client | null {
+  if (!email) return null
+  const e = String(email).trim().toLowerCase()
+  if (!e || !e.includes("@")) return null
+  const found = crmDb().query("SELECT * FROM clients WHERE LOWER(email) = ? LIMIT 1").get(e) as Client | undefined
+  if (found) return found
+  // Strict domain fallback: only match when a client's website hostname
+  // exactly equals the email's domain (B2B: hello@acme.com -> acme.com site).
+  const domain = e.split("@")[1]
+  if (!domain) return null
+  const clients = crmDb().query("SELECT * FROM clients WHERE website IS NOT NULL AND website != ''").all() as Client[]
+  for (const c of clients) {
+    try {
+      const u = new URL((c.website || "").includes("://") ? (c.website as string) : "https://" + (c.website as string))
+      if (u.hostname.toLowerCase() === domain || u.hostname.toLowerCase() === "www." + domain) return c
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
+export function listEmails(filter: { folder?: string; q?: string; client_id?: number; limit?: number } = {}): Email[] {
+  const limit = Math.max(1, Math.min(500, filter.limit ?? 100))
+  const where: string[] = []
+  const params: unknown[] = []
+  if (filter.folder) { where.push("folder = ?"); params.push(filter.folder) }
+  if (filter.client_id) { where.push("client_id = ?"); params.push(filter.client_id) }
+  if (filter.q) {
+    const like = "%" + filter.q + "%"
+    where.push("(subject LIKE ? OR body LIKE ? OR from_addr LIKE ? OR to_addr LIKE ? OR cc LIKE ?)")
+    params.push(like, like, like, like, like)
+  }
+  const sql = "SELECT * FROM emails" + (where.length ? " WHERE " + where.join(" AND ") : "") + " ORDER BY occurred_at DESC, id DESC LIMIT ?"
+  params.push(limit)
+  return rows<Email>(sql, params)
+}
+
+export function getEmail(id: number): Email | null {
+  return (crmDb().query("SELECT * FROM emails WHERE id = ?").get(id) as Email | undefined) ?? null
+}
+
+export function createEmail(input: EmailInput): Email {
+  const now = nowISO()
+  const occurredAt = input.occurred_at ?? now
+  const result = crmDb().run(
+    `INSERT INTO emails (folder, direction, from_addr, to_addr, cc, bcc, subject, body, html, occurred_at, created_at, updated_at, client_id, company, thread_id, is_read, is_starred, labels, resend_id, gmail_id, provider, in_reply_to, has_attachments)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.folder ?? "drafts",
+      input.direction ?? "out",
+      input.from_addr ?? null,
+      input.to_addr ?? null,
+      input.cc ?? null,
+      input.bcc ?? null,
+      input.subject ?? null,
+      input.body ?? null,
+      input.html ?? null,
+      occurredAt,
+      now,
+      now,
+      input.client_id ?? null,
+      input.company ?? null,
+      input.thread_id ?? null,
+      input.is_read ?? 0,
+      input.is_starred ?? 0,
+      input.labels ?? null,
+      input.resend_id ?? null,
+      input.gmail_id ?? null,
+      input.provider ?? "local",
+      input.in_reply_to ?? null,
+      input.has_attachments ?? 0,
+    ],
+  )
+  const email = getEmail(Number(result.lastInsertRowid))
+  if (!email) throw new Error("Email insert did not produce a row.")
+  return email
+}
+
+export function updateEmail(id: number, patch: Partial<EmailInput> & { folder?: string; is_read?: number; is_starred?: number }): Email | null {
+  const existing = getEmail(id)
+  if (!existing) return null
+  const now = nowISO()
+  const fields: string[] = []
+  const params: unknown[] = []
+  const map: Record<string, unknown> = {
+    folder: patch.folder,
+    direction: patch.direction,
+    from_addr: patch.from_addr,
+    to_addr: patch.to_addr,
+    cc: patch.cc,
+    bcc: patch.bcc,
+    subject: patch.subject,
+    body: patch.body,
+    html: patch.html,
+    occurred_at: patch.occurred_at,
+    client_id: patch.client_id,
+    company: patch.company,
+    thread_id: patch.thread_id,
+    is_read: patch.is_read,
+    is_starred: patch.is_starred,
+    labels: patch.labels,
+    resend_id: patch.resend_id,
+    gmail_id: patch.gmail_id,
+    provider: patch.provider,
+    in_reply_to: patch.in_reply_to,
+    has_attachments: patch.has_attachments,
+  }
+  for (const [k, v] of Object.entries(map)) {
+    if (v !== undefined) { fields.push(`${k} = ?`); params.push(v) }
+  }
+  if (fields.length === 0) return existing
+  fields.push("updated_at = ?")
+  params.push(now)
+  params.push(id)
+  crmDb().run(`UPDATE emails SET ${fields.join(", ")} WHERE id = ?`, params as any)
+  return getEmail(id)
+}
+
+export function deleteEmail(id: number): void {
+  crmDb().run("DELETE FROM emails WHERE id = ?", [id])
+}
+
+export function moveEmail(id: number, folder: string): Email | null {
+  return updateEmail(id, { folder })
+}
+
+export function emailCounts(): Record<string, number> {
+  const rows = crmDb().query("SELECT folder, COUNT(*) as c FROM emails GROUP BY folder").all() as { folder: string; c: number }[]
+  const out: Record<string, number> = { inbox: 0, sent: 0, drafts: 0, trash: 0, starred: 0, all: 0 }
+  let total = 0
+  for (const r of rows) { out[r.folder] = (out[r.folder] ?? 0) + r.c; total += r.c }
+  out.all = total
+  const starred = crmDb().query("SELECT COUNT(*) as c FROM emails WHERE is_starred = 1 AND folder != 'trash'").get() as { c: number }
+  out.starred = starred?.c ?? 0
+  const unread = crmDb().query("SELECT COUNT(*) as c FROM emails WHERE folder = 'inbox' AND is_read = 0").get() as { c: number }
+  out.unread = unread?.c ?? 0
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -1524,4 +1789,121 @@ export function weeklyDigest(): string {
   lines.push("## Deals")
   lines.push(`- Open: ${r.open_deals}, Won: ${r.won_deals}`)
   return lines.join("\\n")
+}
+
+// ---------------------------------------------------------------------------
+// Products — the AI Enablement expert's own stack (things they sell).
+// ---------------------------------------------------------------------------
+
+export interface Product {
+  id: number
+  name: string
+  type: string
+  description: string | null
+  price: number | null
+  currency: string
+  url: string | null
+  audience: string | null
+  deliverable: string | null
+  notes: string | null
+  strategy: string | null
+  strategy_generated_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProductInput {
+  name: string
+  type?: string
+  description?: string | null
+  price?: number | null
+  currency?: string
+  url?: string | null
+  audience?: string | null
+  deliverable?: string | null
+  notes?: string | null
+}
+
+export function addProduct(input: ProductInput): Product {
+  const db = crmDb()
+  const now = nowISO()
+  const res = db.run(
+    `INSERT INTO products (name, type, description, price, currency, url, audience, deliverable, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.name,
+      input.type ?? "product",
+      input.description ?? null,
+      input.price ?? null,
+      input.currency ?? "EUR",
+      input.url ?? null,
+      input.audience ?? null,
+      input.deliverable ?? null,
+      input.notes ?? null,
+      now,
+      now,
+    ],
+  )
+  const id = Number(res.lastInsertRowid)
+  return getProduct(id)!
+}
+
+export function getProduct(id: number): Product | null {
+  const db = crmDb()
+  const row = db.query("SELECT * FROM products WHERE id = ?").get(id) as any
+  return row ? (row as Product) : null
+}
+
+export function listProducts(type?: string): Product[] {
+  const db = crmDb()
+  if (type) {
+    return db.query("SELECT * FROM products WHERE type = ? ORDER BY name").all(type) as Product[]
+  }
+  return db.query("SELECT * FROM products ORDER BY name").all() as Product[]
+}
+
+export function updateProduct(id: number, patch: any): Product | null {
+  const db = crmDb()
+  const existing = getProduct(id)
+  if (!existing) return null
+  const now = nowISO()
+  const fields: string[] = []
+  const values: any[] = []
+  const updatable: string[] = [
+    "name", "type", "description", "price", "currency", "url", "audience", "deliverable", "notes", "strategy", "strategy_generated_at",
+  ]
+  for (const key of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      fields.push(`${key} = ?`)
+      values.push((patch as any)[key] ?? null)
+    }
+  }
+  if (!fields.length) return existing
+  fields.push("updated_at = ?")
+  values.push(now)
+  values.push(id)
+  db.run(`UPDATE products SET ${fields.join(", ")} WHERE id = ?`, values)
+  return getProduct(id)
+}
+
+export function deleteProduct(id: number): boolean {
+  const db = crmDb()
+  const res = db.run("DELETE FROM products WHERE id = ?", [id])
+  return (res.changes ?? 0) > 0
+}
+
+export function productsSummary(): string {
+  const rows = listProducts()
+  if (!rows.length) return "No products registered yet."
+  return rows
+    .map((p) => {
+      const price = p.price != null ? `EUR ${p.price}` : "no price set"
+      const parts = [`${p.name} (${p.type}) — ${price}`]
+      if (p.description) parts.push(`  ${p.description}`)
+      if (p.audience) parts.push(`  Audience: ${p.audience}`)
+      if (p.deliverable) parts.push(`  Deliverable: ${p.deliverable}`)
+      if (p.url) parts.push(`  URL: ${p.url}`)
+      return parts.join("\n")
+    })
+    .join("\n\n")
 }

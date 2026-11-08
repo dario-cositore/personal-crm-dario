@@ -166,6 +166,13 @@ export default Plugin.define({
           }
         }
       } catch (error) { debug(`vertical-inject-error: ${String(error)}`) }
+      try {
+        const { productsSummary } = await import("./crm.js")
+        const summary = productsSummary()
+        if (summary && summary !== "No products registered yet.") {
+          event.system.push({ type: "text", text: `## My Products (the expert's stack — what they sell)\n${summary}\n\nUse this list when matching an offer to a client: recommend the product that fits the client's pain, vertical and budget. Never invent products not on this list.` })
+        }
+      } catch (error) { debug(`products-inject-error: ${String(error)}`) }
     }
 
     const injectSetup = (system: { type: "text"; text: string }[], sessionID?: string) => {}
