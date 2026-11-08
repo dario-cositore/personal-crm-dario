@@ -778,6 +778,10 @@ setTimeout(restoreFoldableNav, 100);
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       Content Calendar
     </button>
+    <button class="nav-item" onclick="showView('mktReachout', this); loadMktReachout()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+      Reachout
+    </button>
     <div class="nav-section" onclick="toggleNavSection(this)">Lists</div>
     <button class="nav-item" onclick="showView('lists', this); loadLists()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -1158,6 +1162,70 @@ setTimeout(restoreFoldableNav, 100);
           </table>
         </div>
       </div>
+      <div id="mktReachout" class="view">
+        <div class="page-header">
+          <h1>Cold Reachout</h1>
+          <p>Mass cold-email reachout with mini-batches, buffer delays, and domain warmup.</p>
+        </div>
+        <div class="section-card" style="margin-bottom:12px">
+          <h4>Warmup & deliverability guidance</h4>
+          <div style="font-size:12px;line-height:1.6;color:var(--text-secondary)">
+            <strong>Daily cap per mailbox (research-based):</strong> Stage 0 new domain 5-10/day (warmup only) · Stage 1 (wk1-2) 10-20 · Stage 2 (wk3-4) 20-30 · Stage 3 (mature) 30-50 · Stage 4 (fully warmed) 50-100 (use inbox rotation).<br>
+            <strong>Buffer between sends:</strong> random 2-5 min (120-300s) between emails to mimic human behavior. Never send at exact intervals.<br>
+            <strong>Spread:</strong> send within business hours (9am-5pm recipient TZ). Verify emails first (bounce &lt;5%). Keep spam complaints &lt;0.1%. Use a dedicated sending domain, not your primary. Ramp gradually over 2-4 weeks.<br>
+            <strong>Batching:</strong> split the full list into mini-batches (default 10). Process one batch per "Run due" click. Scaling beyond one mailbox = inbox rotation.
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" onclick="openReachoutForm()">+ New campaign</button>
+          <select id="reachoutStatusFilter" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadMktReachout()">
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="completed">Completed</option>
+          </select>
+          <span id="reachoutCounter" style="color:var(--text-muted);font-size:13px"></span>
+        </div>
+        <div id="reachoutForm" style="display:none;margin-bottom:16px" class="section-card">
+          <h4 id="reachoutFormTitle">New reachout campaign</h4>
+          <input type="hidden" id="reachoutId" value="">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>Name<input id="reachoutName" type="text" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Status<select id="reachoutStatus" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option></select></label>
+            <label>Daily cap<input id="reachoutDailyCap" type="number" value="30" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Warmup stage<select id="reachoutWarmup" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="updateReachoutCapHint()"><option value="0">0 — New domain (5-10/day)</option><option value="1">1 — Wk1-2 (10-20/day)</option><option value="2" selected>2 — Wk3-4 (20-30/day)</option><option value="3">3 — Mature (30-50/day)</option><option value="4">4 — Fully warmed (50-100/day)</option></select></label>
+            <label>Buffer min (sec)<input id="reachoutBufMin" type="number" value="120" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Buffer max (sec)<input id="reachoutBufMax" type="number" value="300" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Batch size<input id="reachoutBatchSize" type="number" value="10" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>Start date<input id="reachoutStart" type="text" placeholder="YYYY-MM-DD" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label>From email<input id="reachoutFrom" type="text" placeholder="you@yourdomain.com" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Subject template<input id="reachoutSubject" type="text" placeholder="Hi {name}, ..." style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
+            <label style="grid-column:1/-1">Body template<textarea id="reachoutBody" rows="4" placeholder="Hi {name}, ..." style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+            <label style="grid-column:1/-1">Notes<textarea id="reachoutNotes" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></textarea></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn sm" onclick="saveReachout()">Save</button>
+            <button class="btn sm ghost" onclick="closeReachoutForm()">Cancel</button>
+          </div>
+        </div>
+        <div id="reachoutList" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div id="reachoutDetail" style="display:none;margin-top:12px" class="section-card">
+          <h4 id="reachoutDetailTitle">Campaign detail</h4>
+          <div id="reachoutDetailStats" style="font-size:12px;margin-bottom:8px"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button class="btn sm primary" onclick="buildReachoutSchedule()">Build schedule from segment</button>
+            <button class="btn sm" onclick="runReachoutDue()">Send due (batch)</button>
+            <button class="btn sm secondary" onclick="closeReachoutDetail()">Close</button>
+          </div>
+          <div id="reachoutQueueWrap" style="max-height:40vh;overflow:auto">
+            <table class="scout-table" id="reachoutQueueTable" style="width:100%">
+              <thead><tr><th>Recipient</th><th>Email</th><th>Batch</th><th>Scheduled</th><th>Status</th></tr></thead>
+              <tbody id="reachoutQueueBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div id="tableview" class="view">
         <div class="page-header">
           <h1>Clients</h1>
@@ -1479,7 +1547,7 @@ function showView(name, el) {
     target = Array.from(document.querySelectorAll('.nav-item')).find(b => (b.getAttribute('onclick')||'').indexOf("'"+name+"'") !== -1);
   }
   if (target) target.classList.add('active');
-  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],products:['My Products','What you sell — the expert stack the agent knows'],productdetail:['Product Profile','Product details and system strategy'],mktEmails:['Email Campaigns','Marketing email campaigns'],mktAds:['Ads','Ad campaigns'],mktContent:['Content Calendar','Scheduled content'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator'],mail:['Mail','Email inbox, sent, drafts and trash']};
+  const titles = {settings:['Settings','Configuration & status'],setup:['Setup','Guided onboarding'],people:['People','Contacts across companies'],companies:['Companies','Companies represented in the CRM'],companydetail:['Company','Company detail'],segments:['Segmentation','Organize contacts into buckets'],board:['Pipeline','All clients by stage'],queue:['Approval queue','Drafts waiting for your batch approval'],scout:['Scout','Find local businesses and add them to the CRM'],detail:['Client','Client detail'],deals:['Deals','All opportunities'],tasks:['Tasks','Clients with a next action due'],lists:['Lists','Tags in use'],products:['My Products','What you sell — the expert stack the agent knows'],productdetail:['Product Profile','Product details and system strategy'],mktEmails:['Email Campaigns','Marketing email campaigns'],mktAds:['Ads','Ad campaigns'],mktContent:['Content Calendar','Scheduled content'],mktReachout:['Reachout','Cold email mass reachout with warmup'],tableview:['Clients','Table view'],chat:['Ask Elitza','Full conversation with your AI Enablement operator'],mail:['Mail','Email inbox, sent, drafts and trash']};
   if (titles[name]) { document.getElementById('topTitle').textContent = titles[name][0]; document.getElementById('topSubtitle').textContent = titles[name][1]; }
 }
 
@@ -1965,6 +2033,138 @@ async function deleteMktContent(id) {
   if (!confirm('Delete this item?')) return;
   try { await api('/api/mkt/content/' + id, { method:'DELETE' }); toast('Deleted','ok'); await loadMktContent(); }
   catch(e) { toast('Delete failed: ' + e, 'err'); }
+}
+
+// ===== Marketing: Cold Reachout =====
+let currentReachoutId = null;
+async function loadMktReachout() {
+  const status = document.getElementById('reachoutStatusFilter')?.value || '';
+  const params = new URLSearchParams(); if (status) params.set('status', status);
+  try {
+    const data = await api('/api/mkt/reachout/campaigns' + (params.toString() ? '?' + params.toString() : ''));
+    const items = data.campaigns || [];
+    const wrap = document.getElementById('reachoutList');
+    wrap.innerHTML = items.map(c =>
+      '<div class="section-card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<div style="flex:1;min-width:200px"><strong>'+esc(c.name)+'</strong> <span class="pill">'+esc(c.status)+'</span><br>'+
+      '<span style="font-size:11px;color:var(--text-muted)">cap '+c.daily_cap+'/day · buffer '+c.buffer_min_sec+'-'+c.buffer_max_sec+'s · batch '+c.batch_size+' · stage '+c.warmup_stage+'</span></div>'+
+      '<button class="btn sm" onclick="openReachoutDetail('+c.id+')">Open</button>'+
+      '<button class="btn ghost sm" onclick="editReachout('+c.id+')">Edit</button>'+
+      '<button class="btn ghost sm" onclick="deleteReachout('+c.id+')">Del</button></div>').join('');
+    if (!items.length) wrap.innerHTML = '<div style="color:var(--text-muted)">No reachout campaigns yet.</div>';
+    const counter = document.getElementById('reachoutCounter'); if (counter) counter.textContent = items.length + ' campaign(s)';
+  } catch(e) { document.getElementById('reachoutList').innerHTML = '<div style="color:var(--err)">Error: '+esc(String(e))+'</div>'; }
+}
+function openReachoutForm(c) {
+  document.getElementById('reachoutForm').style.display = 'block';
+  document.getElementById('reachoutFormTitle').textContent = c ? 'Edit campaign' : 'New campaign';
+  document.getElementById('reachoutId').value = c ? c.id : '';
+  document.getElementById('reachoutName').value = c ? (c.name||'') : '';
+  document.getElementById('reachoutStatus').value = c ? (c.status||'draft') : 'draft';
+  document.getElementById('reachoutDailyCap').value = c ? c.daily_cap : 30;
+  document.getElementById('reachoutWarmup').value = c ? c.warmup_stage : 2;
+  document.getElementById('reachoutBufMin').value = c ? c.buffer_min_sec : 120;
+  document.getElementById('reachoutBufMax').value = c ? c.buffer_max_sec : 300;
+  document.getElementById('reachoutBatchSize').value = c ? c.batch_size : 10;
+  document.getElementById('reachoutStart').value = c ? (c.start_date||'') : '';
+  document.getElementById('reachoutFrom').value = c ? (c.from_email||'') : '';
+  document.getElementById('reachoutSubject').value = c ? (c.subject||'') : '';
+  document.getElementById('reachoutBody').value = c ? (c.body||'') : '';
+  document.getElementById('reachoutNotes').value = c ? (c.notes||'') : '';
+  updateReachoutCapHint();
+}
+function closeReachoutForm() { document.getElementById('reachoutForm').style.display = 'none'; }
+async function editReachout(id) {
+  try {
+    const data = await api('/api/mkt/reachout/campaigns/' + id);
+    openReachoutForm(data.campaign);
+  } catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+async function saveReachout() {
+  const id = document.getElementById('reachoutId').value;
+  const body = {
+    name: document.getElementById('reachoutName').value.trim(),
+    status: document.getElementById('reachoutStatus').value,
+    daily_cap: Number(document.getElementById('reachoutDailyCap').value) || 30,
+    warmup_stage: Number(document.getElementById('reachoutWarmup').value) || 2,
+    buffer_min_sec: Number(document.getElementById('reachoutBufMin').value) || 120,
+    buffer_max_sec: Number(document.getElementById('reachoutBufMax').value) || 300,
+    batch_size: Number(document.getElementById('reachoutBatchSize').value) || 10,
+    start_date: document.getElementById('reachoutStart').value.trim() || null,
+    from_email: document.getElementById('reachoutFrom').value.trim() || null,
+    subject: document.getElementById('reachoutSubject').value.trim() || null,
+    body: document.getElementById('reachoutBody').value.trim() || null,
+    notes: document.getElementById('reachoutNotes').value.trim() || null,
+  };
+  if (!body.name) { toast('Name required', 'err'); return; }
+  try {
+    if (id) await api('/api/mkt/reachout/campaigns/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    else await api('/api/mkt/reachout/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    toast('Saved', 'ok'); closeReachoutForm(); await loadMktReachout();
+  } catch(e) { toast('Save failed: ' + e, 'err'); }
+}
+async function deleteReachout(id) {
+  if (!confirm('Delete this campaign and its queue?')) return;
+  try { await api('/api/mkt/reachout/campaigns/' + id, { method:'DELETE' }); toast('Deleted','ok'); await loadMktReachout(); }
+  catch(e) { toast('Delete failed: ' + e, 'err'); }
+}
+async function updateReachoutCapHint() {
+  const stage = Number(document.getElementById('reachoutWarmup').value);
+  try {
+    const r = await api('/api/mkt/reachout/recommended-cap?stage=' + stage);
+    const hint = document.getElementById('reachoutDailyCap');
+    if (hint && !hint.dataset.touched) hint.value = r.max;
+  } catch(e) {}
+}
+async function openReachoutDetail(id) {
+  currentReachoutId = id;
+  document.getElementById('reachoutDetail').style.display = 'block';
+  await refreshReachoutDetail();
+}
+function closeReachoutDetail() { document.getElementById('reachoutDetail').style.display = 'none'; currentReachoutId = null; }
+async function refreshReachoutDetail() {
+  if (!currentReachoutId) return;
+  try {
+    const data = await api('/api/mkt/reachout/campaigns/' + currentReachoutId);
+    const c = data.campaign; const s = data.stats;
+    document.getElementById('reachoutDetailTitle').textContent = c.name + ' — detail';
+    document.getElementById('reachoutDetailStats').innerHTML =
+      'Status: <strong>'+esc(c.status)+'</strong> · Total: '+s.total+' · Queued: '+s.queued+' · Sent: '+s.sent+' · Failed: '+s.failed+' · Skipped: '+s.skipped + (s.next_due ? ' · Next due: '+esc(s.next_due) : '');
+    const qdata = await api('/api/mkt/reachout/campaigns/' + currentReachoutId + '/queue');
+    const q = qdata.queue || [];
+    const tbody = document.getElementById('reachoutQueueBody');
+    tbody.innerHTML = q.map(r =>
+      '<tr><td>'+esc(r.client_name||'')+'</td><td>'+esc(r.client_email||'')+'</td><td>'+r.batch_no+'</td><td>'+esc(r.scheduled_at)+'</td><td><span class="pill">'+esc(r.status)+'</span>'+(r.error?' <span style="color:var(--err);font-size:10px">'+esc(r.error)+'</span>':'')+'</td></tr>').join('');
+    if (!q.length) tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">No queue yet. Build schedule first.</td></tr>';
+  } catch(e) { toast('Load failed: ' + e, 'err'); }
+}
+async function buildReachoutSchedule() {
+  if (!currentReachoutId) return;
+  // get recipients: clients with email, optionally filtered by status
+  let status = prompt('Filter recipients by status? (leave blank for all with email)', '');
+  let url = '/api/mkt/reachout/campaigns/' + currentReachoutId + '/recipients';
+  if (status) url += '?status=' + encodeURIComponent(status);
+  try {
+    const rdata = await api(url);
+    const ids = (rdata.clients || []).map(c => c.id);
+    if (!ids.length) { toast('No recipients with email found', 'err'); return; }
+    if (!confirm('Build schedule for ' + ids.length + ' recipients?')) return;
+    const res = await api('/api/mkt/reachout/campaigns/' + currentReachoutId + '/build', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ recipient_ids: ids }) });
+    toast('Queued ' + res.queued + ' recipients', 'ok');
+    await refreshReachoutDetail();
+  } catch(e) { toast('Build failed: ' + e, 'err'); }
+}
+async function runReachoutDue() {
+  if (!currentReachoutId) return;
+  const batchSize = prompt('How many to send this batch? (1-25)', '10');
+  if (!batchSize) return;
+  toast('Sending due emails…', 'info');
+  try {
+    const res = await api('/api/mkt/reachout/campaigns/' + currentReachoutId + '/send-due', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ batch_size: Number(batchSize) }) });
+    toast('Sent ' + res.sent + ', failed ' + res.failed + ', skipped ' + res.skipped, res.failed ? 'warn' : 'ok');
+    if (res.errors && res.errors.length) console.log(res.errors);
+    await refreshReachoutDetail();
+  } catch(e) { toast('Send failed: ' + e, 'err'); }
 }
 
 let peopleDebounceTimer = null;
@@ -2978,6 +3178,7 @@ async function openDetail(id) {
     + '</div>';
   showView('detail');
   loadWorksheetRecs(id);
+  restoreEnrichPanel(id);
 }
 
 function closeDetail() { showView('board'); }
@@ -3050,37 +3251,97 @@ function closeAsset() {
   document.getElementById('assetDrawer').classList.remove('open');
 }
 
+window.enrichActive = window.enrichActive || new Set();
+window.enrichResults = window.enrichResults || new Map();
 async function enrichClient(id) {
+  if (window.enrichActive.has(id)) { toast('Enrichment already running for this client', 'info'); return; }
+  window.enrichActive.add(id);
   const panel = document.getElementById('enrichPanel');
-  if (panel) { panel.classList.add('show'); panel.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--text-muted)"><div class="spinner"></div> Enriching… fetching website + running diagnosis (30-60s)</div>'; }
+  if (panel) { panel.classList.add('show'); panel.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--text-muted)"><div class="spinner"></div> Enriching… live progress below (runs in background, safe to navigate away)</div><div id="enrichLog" style="margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--text-secondary);max-height:260px;overflow:auto;background:var(--bg-elevated);padding:8px;border-radius:var(--radius-sm);border:1px solid var(--border)"></div>'; }
   document.getElementById('statusText').textContent = 'Enriching client '+id+'…';
-  let r;
-  try { r = await api('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) }); }
-  catch (e) { if (panel) panel.innerHTML = '<div style="color:var(--err)">Failed: '+esc(String(e))+'</div>'; document.getElementById('statusText').textContent = 'Enrich failed'; return; }
-  if (!r.ok) { if (panel) panel.innerHTML = '<div style="color:var(--err)">Error: '+esc(r.error||'unknown')+'</div>'; document.getElementById('statusText').textContent = 'Enrich failed'; toast(r.error||'Enrich failed','err'); return; }
-  if (panel) {
-    const socials = r.socials || {};
-    const socialLinks = Object.entries(socials).filter(([k,v])=>v).map(([k,v]) => '<a class="pill accent" href="'+esc(absUrl(v))+'" target="_blank" rel="noopener">'+(SOCIAL_LABEL[k]||k)+' ↗</a>').join('');
-    paintSocials(Object.fromEntries(Object.entries(socials).filter(([,v])=>v)));
-    panel.innerHTML = '<h4>Enrichment result</h4>'
-      + (r.website ? '<div class="field"><span class="label">Website</span><span class="value">'+webLink(r.website)+'</span></div>' : '')
-      + (r.emails && r.emails.length ? '<div class="field"><span class="label">Emails found</span><span class="value">'+r.emails.map(e=>mailLink(e)).join(', ')+'</span></div>' : '')
-      + (r.phones && r.phones.length ? '<div class="field"><span class="label">Phones found</span><span class="value mono">'+r.phones.map(p=>telLink(p)).join(', ')+'</span></div>' : '')
-      + (socialLinks ? '<div class="field"><span class="label">Social</span><span class="value social-chips">'+socialLinks+'</span></div>' : '')
-      + (r.tech_stack ? '<div class="field"><span class="label">Tech stack</span><span class="value">'+esc(r.tech_stack)+'</span></div>' : '')
-      + (r.revenue_estimate ? '<div class="field"><span class="label">Revenue est.</span><span class="value">'+esc(r.revenue_estimate)+'</span></div>' : '')
-      + (r.employee_count ? '<div class="field"><span class="label">Employees</span><span class="value">'+esc(r.employee_count)+'</span></div>' : '')
-      + (r.risk_level ? '<div class="field"><span class="label">Risk</span><span class="value"><span class="pill '+(r.risk_level==='high'?'err':r.risk_level==='medium'?'warn':'ok')+'">'+esc(r.risk_level)+'</span>'+(r.risk_score?' <span style="color:var(--text-muted);font-size:11px">('+r.risk_score+'/100)</span>':'')+'</span></div>' : '')
-      + (r.risk_notes ? '<div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">'+linkify(esc(r.risk_notes))+'</div>' : '')
-      + (r.price ? '<div class="field" style="margin-top:8px"><span class="label">Price</span><span class="value price">'+esc(r.price)+'</span></div>' : '')
-      + (r.diagnosis ? '<div style="margin-top:10px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Diagnosis</div><pre>'+linkify(esc(r.diagnosis))+'</pre></div>' : '')
-      + (r.proposal ? '<div style="margin-top:10px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Proposal</div><pre>'+linkify(esc(r.proposal))+'</pre></div>' : '')
-      + (r.next_action ? '<div class="field" style="margin-top:8px"><span class="label">Next action</span><span class="value">'+esc(r.next_action)+'</span></div>' : '');
-    panel.classList.add('show');
+  let started = false;
+  try { const r = await api('/api/enrich', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) }); started = !!r.started; }
+  catch (e) { window.enrichActive.delete(id); if (panel) panel.innerHTML = '<div style="color:var(--err)">Failed: '+esc(String(e))+'</div>'; document.getElementById('statusText').textContent = 'Enrich failed'; return; }
+  if (!started) { window.enrichActive.delete(id); if (panel) panel.innerHTML = '<div style="color:var(--err)">Failed to start</div>'; return; }
+  const logEl = document.getElementById('enrichLog');
+  let after = 0;
+  let done = false;
+  let result = null;
+  while (!done) {
+    await new Promise(res => setTimeout(res, 700));
+    try {
+      const lr = await api('/api/enrich/log/'+id+'?after='+after);
+      if (lr.lines && lr.lines.length) {
+        const el = document.getElementById('enrichLog');
+        for (const ln of lr.lines) { if (el) { const d = document.createElement('div'); d.textContent = ln; el.appendChild(d); el.scrollTop = el.scrollHeight; } }
+        after = lr.total;
+      }
+      done = !!lr.done;
+    } catch (e) { /* ignore */ }
   }
-  document.getElementById('statusText').textContent = 'Enriched client '+id;
-  toast('Enrichment complete','ok');
+  try { const st = await api('/api/enrich/status/'+id); result = st.result; } catch (e) {}
+  window.enrichActive.delete(id);
+  if (result) window.enrichResults.set(id, result);
+  const panelNow = document.getElementById('enrichPanel');
+  if (result && result.ok) {
+    if (panelNow && currentDetail && currentDetail.client && currentDetail.client.id === id) {
+      const socials = result.socials || {};
+      const socialLinks = Object.entries(socials).filter(([k,v])=>v).map(([k,v]) => '<a class="pill accent" href="'+esc(absUrl(v))+'" target="_blank" rel="noopener">'+(SOCIAL_LABEL[k]||k)+' ↗</a>').join('');
+      paintSocials(Object.fromEntries(Object.entries(socials).filter(([,v])=>v)));
+      const logHtml = (document.getElementById('enrichLog') ? document.getElementById('enrichLog').outerHTML : '');
+      panelNow.innerHTML = logHtml + '<h4 style="margin-top:10px">Enrichment result</h4>'
+        + (result.website ? '<div class="field"><span class="label">Website</span><span class="value">'+webLink(result.website)+'</span></div>' : '')
+        + (result.emails && result.emails.length ? '<div class="field"><span class="label">Emails found</span><span class="value">'+result.emails.map(e=>mailLink(e)).join(', ')+'</span></div>' : '')
+        + (result.phones && result.phones.length ? '<div class="field"><span class="label">Phones found</span><span class="value mono">'+result.phones.map(p=>telLink(p)).join(', ')+'</span></div>' : '')
+        + (socialLinks ? '<div class="field"><span class="label">Social</span><span class="value social-chips">'+socialLinks+'</span></div>' : '')
+        + (result.tech_stack ? '<div class="field"><span class="label">Tech stack</span><span class="value">'+esc(result.tech_stack)+'</span></div>' : '')
+        + (result.revenue_estimate ? '<div class="field"><span class="label">Revenue est.</span><span class="value">'+esc(result.revenue_estimate)+'</span></div>' : '')
+        + (result.employee_count ? '<div class="field"><span class="label">Employees</span><span class="value">'+esc(result.employee_count)+'</span></div>' : '')
+        + (result.risk_level ? '<div class="field"><span class="label">Risk</span><span class="value"><span class="pill '+(result.risk_level==='high'?'err':result.risk_level==='medium'?'warn':'ok')+'">'+esc(result.risk_level)+'</span>'+(result.risk_score?' <span style="color:var(--text-muted);font-size:11px">('+result.risk_score+'/100)</span>':'')+'</span></div>' : '')
+        + (result.risk_notes ? '<div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">'+linkify(esc(result.risk_notes))+'</div>' : '')
+        + (result.price ? '<div class="field" style="margin-top:8px"><span class="label">Price</span><span class="value price">'+esc(result.price)+'</span></div>' : '')
+        + (result.diagnosis ? '<div style="margin-top:10px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Diagnosis</div><pre>'+linkify(esc(result.diagnosis))+'</pre></div>' : '')
+        + (result.proposal ? '<div style="margin-top:10px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:4px">Proposal</div><pre>'+linkify(esc(result.proposal))+'</pre></div>' : '')
+        + (result.next_action ? '<div class="field" style="margin-top:8px"><span class="label">Next action</span><span class="value">'+esc(result.next_action)+'</span></div>' : '');
+      panelNow.classList.add('show');
+    }
+    document.getElementById('statusText').textContent = 'Enriched client '+id;
+    toast('Enrichment complete for client '+id,'ok');
+  } else if (result && result.error) {
+    if (panelNow && currentDetail && currentDetail.client && currentDetail.client.id === id) {
+      panelNow.innerHTML = '<div style="color:var(--err);margin-top:8px">Error: '+esc(result.error)+'</div>';
+    }
+    document.getElementById('statusText').textContent = 'Enrich failed';
+    toast(result.error,'err');
+  } else {
+    document.getElementById('statusText').textContent = 'Enrich finished';
+  }
   await loadBoard();
+  // restore panel if user navigated to this client during enrichment
+  restoreEnrichPanel(id);
+}
+async function restoreEnrichPanel(id) {
+  try {
+    const st = await api('/api/enrich/status/'+id);
+    if (!st || (!st.running && !st.done && (st.lineCount||0)===0)) return;
+    const lr = await api('/api/enrich/log/'+id+'?after=0');
+    const panel = document.getElementById('enrichPanel');
+    if (!panel) return;
+    panel.classList.add('show');
+    if (st.running || window.enrichActive.has(id)) {
+      panel.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--text-muted)"><div class="spinner"></div> Enriching… (background)</div><div id="enrichLog" style="margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--text-secondary);max-height:260px;overflow:auto;background:var(--bg-elevated);padding:8px;border-radius:var(--radius-sm);border:1px solid var(--border)"></div>';
+      const el = document.getElementById('enrichLog');
+      for (const ln of (lr.lines||[])) { if (el) { const d=document.createElement('div'); d.textContent=ln; el.appendChild(d); } }
+      if (el) el.scrollTop = el.scrollHeight;
+    } else if (st.done && st.result && st.result.ok) {
+      const r = st.result;
+      const cached = window.enrichResults.get(id);
+      // render minimal
+      panel.innerHTML = '<div style="color:var(--ok);font-size:12px;margin-bottom:6px">Enrichment complete.</div><div id="enrichLog" style="font-family:var(--mono);font-size:11px;color:var(--text-secondary);max-height:160px;overflow:auto;background:var(--bg-elevated);padding:8px;border-radius:var(--radius-sm);border:1px solid var(--border)"></div>';
+      const el = document.getElementById('enrichLog');
+      for (const ln of (lr.lines||[])) { if (el) { const d=document.createElement('div'); d.textContent=ln; el.appendChild(d); } }
+    }
+  } catch (e) {}
 }
 
 async function advanceClient(id, stage) {

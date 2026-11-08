@@ -373,6 +373,44 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS mkt_content_status ON mkt_content(status);
   CREATE INDEX IF NOT EXISTS mkt_content_platform ON mkt_content(platform);
+
+  CREATE TABLE IF NOT EXISTS mkt_reachout_campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      segment_id INTEGER,
+      product_id INTEGER,
+      subject TEXT,
+      body TEXT,
+      audience_filter TEXT,
+      daily_cap INTEGER NOT NULL DEFAULT 30,
+      buffer_min_sec INTEGER NOT NULL DEFAULT 120,
+      buffer_max_sec INTEGER NOT NULL DEFAULT 300,
+      batch_size INTEGER NOT NULL DEFAULT 10,
+      warmup_stage INTEGER NOT NULL DEFAULT 2,
+      start_date TEXT,
+      from_email TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mkt_reachout_campaigns_status ON mkt_reachout_campaigns(status);
+
+  CREATE TABLE IF NOT EXISTS mkt_reachout_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id INTEGER NOT NULL,
+      client_id INTEGER NOT NULL,
+      batch_no INTEGER NOT NULL DEFAULT 1,
+      scheduled_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      sent_at TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (campaign_id) REFERENCES mkt_reachout_campaigns(id) ON DELETE CASCADE,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS mkt_reachout_queue_campaign ON mkt_reachout_queue(campaign_id, scheduled_at);
+  CREATE INDEX IF NOT EXISTS mkt_reachout_queue_status ON mkt_reachout_queue(status, scheduled_at);
 `
 /** A row shipped before this column existed must gain it, or the cadence reads null. */
 function migrate(db: Database): void {
@@ -1987,6 +2025,122 @@ export function updateMktContent(id: number, patch: any): MktContent | null {
 export function deleteMktContent(id: number): boolean {
   const res = crmDb().run('DELETE FROM mkt_content WHERE id = ?', [id]);
   return (res.changes ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Marketing — Cold Reachout Campaigns (mass email reachout with warmup)
+// ---------------------------------------------------------------------------
+
+export interface MktReachoutCampaign {
+  id: number; name: string; status: string; segment_id: number | null; product_id: number | null;
+  subject: string | null; body: string | null; audience_filter: string | null;
+  daily_cap: number; buffer_min_sec: number; buffer_max_sec: number; batch_size: number;
+  warmup_stage: number; start_date: string | null; from_email: string | null; notes: string | null;
+  created_at: string; updated_at: string;
+}
+export interface MktReachoutCampaignInput {
+  name: string; status?: string; segment_id?: number | null; product_id?: number | null;
+  subject?: string | null; body?: string | null; audience_filter?: string | null;
+  daily_cap?: number; buffer_min_sec?: number; buffer_max_sec?: number; batch_size?: number;
+  warmup_stage?: number; start_date?: string | null; from_email?: string | null; notes?: string | null;
+}
+export function addMktReachoutCampaign(input: MktReachoutCampaignInput): MktReachoutCampaign {
+  const db = crmDb(); const now = nowISO();
+  const res = db.run(`INSERT INTO mkt_reachout_campaigns (name,status,segment_id,product_id,subject,body,audience_filter,daily_cap,buffer_min_sec,buffer_max_sec,batch_size,warmup_stage,start_date,from_email,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [input.name, input.status ?? 'draft', input.segment_id ?? null, input.product_id ?? null, input.subject ?? null, input.body ?? null, input.audience_filter ?? null, input.daily_cap ?? 30, input.buffer_min_sec ?? 120, input.buffer_max_sec ?? 300, input.batch_size ?? 10, input.warmup_stage ?? 2, input.start_date ?? null, input.from_email ?? null, input.notes ?? null, now, now]);
+  return getMktReachoutCampaign(Number(res.lastInsertRowid))!;
+}
+export function getMktReachoutCampaign(id: number): MktReachoutCampaign | null {
+  const row = crmDb().query('SELECT * FROM mkt_reachout_campaigns WHERE id = ?').get(id) as any;
+  return row ? row as MktReachoutCampaign : null;
+}
+export function listMktReachoutCampaigns(status?: string): MktReachoutCampaign[] {
+  const db = crmDb();
+  if (status) return db.query('SELECT * FROM mkt_reachout_campaigns WHERE status = ? ORDER BY updated_at DESC').all(status) as MktReachoutCampaign[];
+  return db.query('SELECT * FROM mkt_reachout_campaigns ORDER BY updated_at DESC').all() as MktReachoutCampaign[];
+}
+export function updateMktReachoutCampaign(id: number, patch: any): MktReachoutCampaign | null {
+  const db = crmDb(); const existing = getMktReachoutCampaign(id); if (!existing) return null;
+  const now = nowISO();
+  const fields: string[] = []; const values: any[] = [];
+  const updatable = ['name','status','segment_id','product_id','subject','body','audience_filter','daily_cap','buffer_min_sec','buffer_max_sec','batch_size','warmup_stage','start_date','from_email','notes'];
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
+  }
+  if (!fields.length) return existing;
+  fields.push('updated_at = ?'); values.push(now); values.push(id);
+  db.run(`UPDATE mkt_reachout_campaigns SET ${fields.join(', ')} WHERE id = ?`, values);
+  return getMktReachoutCampaign(id);
+}
+export function deleteMktReachoutCampaign(id: number): boolean {
+  crmDb().run('DELETE FROM mkt_reachout_queue WHERE campaign_id = ?', [id]);
+  const res = crmDb().run('DELETE FROM mkt_reachout_campaigns WHERE id = ?', [id]);
+  return (res.changes ?? 0) > 0;
+}
+
+export interface MktReachoutQueueRow {
+  id: number; campaign_id: number; client_id: number; batch_no: number; scheduled_at: string;
+  status: string; sent_at: string | null; error: string | null; created_at: string;
+  client_name?: string; client_email?: string;
+}
+export function listMktReachoutQueue(campaignId: number): MktReachoutQueueRow[] {
+  const db = crmDb();
+  const rows = db.query(`SELECT q.*, c.name AS client_name, c.email AS client_email FROM mkt_reachout_queue q LEFT JOIN clients c ON c.id = q.client_id WHERE q.campaign_id = ? ORDER BY q.scheduled_at ASC`).all(campaignId) as any[];
+  return rows as MktReachoutQueueRow[];
+}
+
+/** Recommended daily cap per warmup stage (research-based). */
+export function reachoutRecommendedCap(stage: number): { min: number; max: number; label: string } {
+  const stages: Record<number, { min: number; max: number; label: string }> = {
+    0: { min: 5, max: 10, label: 'Stage 0 — Brand new domain (warmup only, no cold)' },
+    1: { min: 10, max: 20, label: 'Stage 1 — Week 1-2 warmup' },
+    2: { min: 20, max: 30, label: 'Stage 2 — Week 3-4 (light cold)' },
+    3: { min: 30, max: 50, label: 'Stage 3 — Mature (standard cold)' },
+    4: { min: 50, max: 100, label: 'Stage 4 — Fully warmed (high volume, use rotation)' },
+  };
+  return stages[stage] ?? stages[2];
+}
+
+/** Build a send schedule for a campaign. Splits recipients into daily batches. */
+export function buildReachoutSchedule(campaignId: number, recipientIds: number[]): { queued: number } {
+  const db = crmDb();
+  const campaign = getMktReachoutCampaign(campaignId);
+  if (!campaign) throw new Error('Campaign not found');
+  // clear existing queue
+  db.run('DELETE FROM mkt_reachout_queue WHERE campaign_id = ?', [campaignId]);
+  const dailyCap = Math.max(1, campaign.daily_cap);
+  const bufferMin = Math.max(30, campaign.buffer_min_sec);
+  const bufferMax = Math.max(bufferMin, campaign.buffer_max_sec);
+  const startDate = campaign.start_date ? new Date(campaign.start_date) : new Date();
+  // normalize to 9am
+  startDate.setHours(9, 0, 0, 0);
+  const now = nowISO();
+  let queued = 0;
+  recipientIds.forEach((clientId, idx) => {
+    const dayOffset = Math.floor(idx / dailyCap);
+    const posInDay = idx % dailyCap;
+    const d = new Date(startDate.getTime() + dayOffset * 86400000);
+    // spacing within day: buffer + jitter
+    const avgBuffer = (bufferMin + bufferMax) / 2;
+    const jitter = Math.random() * (bufferMax - bufferMin);
+    const offsetSec = posInDay * (avgBuffer + jitter);
+    d.setSeconds(d.getSeconds() + Math.round(offsetSec));
+    const batchNo = Math.floor(idx / (campaign.batch_size || 10)) + 1;
+    db.run(`INSERT INTO mkt_reachout_queue (campaign_id, client_id, batch_no, scheduled_at, status, created_at) VALUES (?,?,?,?,?,?)`,
+      [campaignId, clientId, batchNo, d.toISOString(), 'queued', now]);
+    queued++;
+  });
+  return { queued };
+}
+
+export function getReachoutStats(campaignId: number): { total: number; queued: number; sent: number; failed: number; skipped: number; next_due: string | null } {
+  const db = crmDb();
+  const rows = db.query('SELECT status, COUNT(*) as c FROM mkt_reachout_queue WHERE campaign_id = ? GROUP BY status').all(campaignId) as any[];
+  const stats = { total: 0, queued: 0, sent: 0, failed: 0, skipped: 0, next_due: null as string | null };
+  for (const r of rows) { stats.total += r.c; if (r.status === 'queued') stats.queued += r.c; if (r.status === 'sent') stats.sent += r.c; if (r.status === 'failed') stats.failed += r.c; if (r.status === 'skipped') stats.skipped += r.c; }
+  const next = db.query("SELECT scheduled_at FROM mkt_reachout_queue WHERE campaign_id = ? AND status = 'queued' ORDER BY scheduled_at ASC LIMIT 1").get(campaignId) as any;
+  if (next) stats.next_due = next.scheduled_at;
+  return stats;
 }
 
 // ---------------------------------------------------------------------------
