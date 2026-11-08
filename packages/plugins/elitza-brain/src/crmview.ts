@@ -436,6 +436,9 @@ async function refreshGmailToken(account: any): Promise<string | null> {
   } catch { return null }
 }
 
+// In-memory enrichment progress store (per client).
+const enrichJobs = new Map<number, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+
 export function startCrmView(ctx?: any): { stop: () => void; port: number } | null {
   const PORT = Number(process.env.CRM_VIEW_PORT ?? 8800)
   let chatSessionId: string | null = null
@@ -1263,6 +1266,114 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const { deleteMktContent } = await import("./crm.js")
           return json({ ok: deleteMktContent(Number(mktContentMatch[1])) })
         }
+
+        // Marketing: Reachout Campaigns
+        if (path === "/api/mkt/reachout/campaigns" && req.method === "GET") {
+          const { listMktReachoutCampaigns } = await import("./crm.js")
+          const status = url.searchParams.get("status") ?? undefined
+          return json({ campaigns: listMktReachoutCampaigns(status) })
+        }
+        if (path === "/api/mkt/reachout/campaigns" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addMktReachoutCampaign } = await import("./crm.js")
+          try { return json({ campaign: addMktReachoutCampaign(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const reachoutCampMatch = path.match(/^\/api\/mkt\/reachout\/campaigns\/(\d+)$/)
+        if (reachoutCampMatch && req.method === "GET") {
+          const { getMktReachoutCampaign, getReachoutStats } = await import("./crm.js")
+          const c = getMktReachoutCampaign(Number(reachoutCampMatch[1]))
+          if (!c) return json({ error: "not found" }, 404)
+          return json({ campaign: c, stats: getReachoutStats(Number(reachoutCampMatch[1])) })
+        }
+        if (reachoutCampMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateMktReachoutCampaign } = await import("./crm.js")
+          const c = updateMktReachoutCampaign(Number(reachoutCampMatch[1]), body)
+          if (!c) return json({ error: "not found" }, 404)
+          return json({ campaign: c })
+        }
+        if (reachoutCampMatch && req.method === "DELETE") {
+          const { deleteMktReachoutCampaign } = await import("./crm.js")
+          return json({ ok: deleteMktReachoutCampaign(Number(reachoutCampMatch[1])) })
+        }
+        const reachoutQueueMatch = path.match(/^\/api\/mkt\/reachout\/campaigns\/(\d+)\/queue$/)
+        if (reachoutQueueMatch && req.method === "GET") {
+          const { listMktReachoutQueue } = await import("./crm.js")
+          return json({ queue: listMktReachoutQueue(Number(reachoutQueueMatch[1])) })
+        }
+        const reachoutBuildMatch = path.match(/^\/api\/mkt\/reachout\/campaigns\/(\d+)\/build$/)
+        if (reachoutBuildMatch && req.method === "POST") {
+          const body = await readBody(req)
+          const { buildReachoutSchedule } = await import("./crm.js")
+          try {
+            const ids = (body.recipient_ids || []).map(Number)
+            const r = buildReachoutSchedule(Number(reachoutBuildMatch[1]), ids)
+            return json(r)
+          } catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const reachoutRecsMatch = path.match(/^\/api\/mkt\/reachout\/campaigns\/(\d+)\/recipients$/)
+        if (reachoutRecsMatch && req.method === "GET") {
+          // Return clients matching segment/status filter for recipient selection
+          const { findClients } = await import("./crm.js")
+          const status = url.searchParams.get("status") ?? undefined
+          const clients = findClients({ status, limit: 500 })
+          return json({ clients: clients.filter((c: any) => c.email) })
+        }
+        const reachoutSendMatch = path.match(/^\/api\/mkt\/reachout\/campaigns\/(\d+)\/send-due$/)
+        if (reachoutSendMatch && req.method === "POST") {
+          const campaignId = Number(reachoutSendMatch[1])
+          const { getMktReachoutCampaign, listMktReachoutQueue, updateMktReachoutQueue } = await import("./crm.js") as any
+          // updateMktReachoutQueue may not exist; handle inline
+          const campaign = getMktReachoutCampaign(campaignId)
+          if (!campaign) return json({ error: "not found" }, 404)
+          const apiKey = process.env.RESEND_API_KEY?.trim()
+          const from = campaign.from_email || process.env.RESEND_FROM?.trim()
+          if (!apiKey) return json({ error: "RESEND_API_KEY not set" }, 400)
+          if (!from) return json({ error: "RESEND_FROM not set" }, 400)
+          const body = await readBody(req)
+          const batchSize = Math.max(1, Math.min(25, Number(body.batch_size ?? campaign.batch_size ?? 10)))
+          const db = (await import("./crm.js")).crmDb()
+          const due = db.query("SELECT q.*, c.name AS cname, c.email AS cemail FROM mkt_reachout_queue q LEFT JOIN clients c ON c.id = q.client_id WHERE q.campaign_id = ? AND q.status = 'queued' AND q.scheduled_at <= ? ORDER BY q.scheduled_at ASC LIMIT ?").all(campaignId, new Date().toISOString(), batchSize) as any[]
+          const result = { sent: 0, failed: 0, skipped: 0, errors: [] as string[] }
+          for (const row of due) {
+            if (!row.cemail) { db.run("UPDATE mkt_reachout_queue SET status='skipped', error='no email' WHERE id=?", [row.id]); result.skipped++; continue }
+            // render template
+            const subject = (campaign.subject || '').replace(/\{name\}/g, row.cname || '').replace(/\{email\}/g, row.cemail || '')
+            const text = (campaign.body || '').replace(/\{name\}/g, row.cname || '').replace(/\{email\}/g, row.cemail || '')
+            try {
+              const r = await fetch((process.env.RESEND_URL || 'https://api.resend.com') + '/emails', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ from, to: [row.cemail], subject, text }),
+              })
+              if (!r.ok) {
+                const detail = (await r.text()).slice(0, 200)
+                db.run("UPDATE mkt_reachout_queue SET status='failed', error=? WHERE id=?", [`HTTP ${r.status}: ${detail}`, row.id])
+                result.failed++; result.errors.push(`${row.cname}: HTTP ${r.status}`)
+                continue
+              }
+              const sentAt = new Date().toISOString()
+              db.run("UPDATE mkt_reachout_queue SET status='sent', sent_at=? WHERE id=?", [sentAt, row.id])
+              result.sent++
+              // buffer delay
+              const minB = campaign.buffer_min_sec || 120
+              const maxB = campaign.buffer_max_sec || 300
+              const delay = (minB + Math.random() * (maxB - minB)) * 1000
+              await new Promise((res) => setTimeout(res, Math.min(delay, 5000)))
+            } catch (e) {
+              db.run("UPDATE mkt_reachout_queue SET status='failed', error=? WHERE id=?", [String(e).slice(0,200), row.id])
+              result.failed++; result.errors.push(`${row.cname}: ${String(e)}`)
+            }
+          }
+          return json(result)
+        }
+        const reachoutRecommendedMatch = path.match(/^\/api\/mkt\/reachout\/recommended-cap$/)
+        if (reachoutRecommendedMatch && req.method === "GET") {
+          const stage = Number(url.searchParams.get("stage") ?? 2)
+          const { reachoutRecommendedCap } = await import("./crm.js")
+          return json(reachoutRecommendedCap(stage))
+        }
         const stratMatch = path.match(/^\/api\/products\/(\d+)\/strategy$/)
         if (stratMatch && req.method === "POST") {
           const id = Number(stratMatch[1])
@@ -1465,8 +1576,41 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
         }
         if (path === "/api/enrich" && req.method === "POST") {
           const body = await readBody(req)
-          const result = await enrichClient(Number(body.id))
-          return json(result)
+          const id = Number(body.id)
+          // start background job
+          const job: { lines: string[]; running: boolean; done: boolean; error?: string; result?: any } = { lines: [], running: true, done: false }
+          enrichJobs.set(id, job)
+          ;(async () => {
+            try {
+              const result = await enrichClient(id, { onProgress: (line) => { job.lines.push(line) } })
+              job.result = result
+              job.done = true
+              job.running = false
+              if (!result?.ok && result?.error) { job.error = result.error; job.lines.push("ERROR: " + result.error) }
+              else { job.lines.push("Enrichment complete.") }
+            } catch (e) {
+              job.error = String(e)
+              job.done = true
+              job.running = false
+              job.lines.push("ERROR: " + String(e))
+            }
+          })()
+          return json({ started: true, client_id: id })
+        }
+        const enrichStatusMatch = path.match(/^\/api\/enrich\/status\/(\d+)$/)
+        if (enrichStatusMatch && req.method === "GET") {
+          const id = Number(enrichStatusMatch[1])
+          const job = enrichJobs.get(id)
+          if (!job) return json({ running: false, done: false, lines: [] })
+          return json({ running: job.running, done: job.done, error: job.error ?? null, result: job.result ?? null, lineCount: job.lines.length })
+        }
+        const enrichLogMatch = path.match(/^\/api\/enrich\/log\/(\d+)$/)
+        if (enrichLogMatch && req.method === "GET") {
+          const id = Number(enrichLogMatch[1])
+          const after = Number(url.searchParams.get("after") ?? 0)
+          const job = enrichJobs.get(id)
+          const lines = job ? job.lines.slice(after) : []
+          return json({ lines, total: job ? job.lines.length : 0, running: job?.running ?? false, done: job?.done ?? false, error: job?.error ?? null })
         }
         if (path === "/api/knowledge" && req.method === "GET") {
           const { listKnowledge, memorySearch } = await import("./memory.js")
