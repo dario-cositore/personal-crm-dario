@@ -63,14 +63,14 @@ const CATEGORY_TAGS = [
     tags: [["amenity", "dentist"]],
   },
   {
-    match: ["avvocato", "avvocati", "lawyer", "lawyers", "attorney", "attorneys"],
+    match: ["avvocato", "avvocati", "lawyer", "lawyers", "attorney", "attorneys", "law firm", "law firms", "law office", "law offices", "legal", "legal services", "esq", "esquire", "solicitor", "solicitors", "barrister", "barristers"],
     tags: [
       ["office", "lawyer"],
       ["office", "attorney"],
     ],
   },
   {
-    match: ["commercialista", "commercialisti", "accountant", "accountants"],
+    match: ["commercialista", "commercialisti", "accountant", "accountants", "accounting firm", "accounting firms", "cpa", "cpas", "bookkeeper", "bookkeepers"],
     tags: [["office", "accountant"]],
   },
   {
@@ -89,12 +89,14 @@ const CATEGORY_TAGS = [
     tags: [["amenity", "pharmacy"]],
   },
   {
-    match: ["medico", "medici", "doctor", "doctors", "physician", "physicians", "clinica", "cliniche", "clinic", "clinics", "medical", "medico privato", "private clinic"],
+    match: ["medico", "medici", "doctor", "doctors", "physician", "physicians", "clinica", "cliniche", "clinic", "clinics", "medical", "medico privato", "private clinic", "ospedale", "ospedali", "hospital", "hospitals", "private hospital", "struttura sanitaria", "poliambulatorio", "poliambulatori"],
     tags: [
       ["amenity", "doctors"],
       ["amenity", "clinic"],
+      ["amenity", "hospital"],
       ["healthcare", "doctor"],
       ["healthcare", "clinic"],
+      ["healthcare", "hospital"],
       ["healthcare", "centre"],
     ],
   },
@@ -214,7 +216,7 @@ export async function scoutBusinesses(
       businesses: [],
       meta: { sources_used: [] },
       steps: ["❌ No OSM mapping for query: " + query],
-      error: `no OpenStreetMap mapping for "${query}" (known: idraulici, parrucchieri, dentisti, avvocati, commercialisti, ristoranti, bar, autofficine, farmacie, medici/cliniche, veterinari, ottici, fisioterapisti, psicologi)`,
+      error: `no OpenStreetMap mapping for "${query}" (known: idraulici, parrucchieri, dentisti, avvocati, commercialisti, ristoranti, bar, autofficine, farmacie, medici/cliniche, veterinari, ottici, fisioterapisti, psicologi. English works too: law firms, attorneys, dentists, pharmacies, clinics, accountants)`,
     }
   }
 
@@ -231,9 +233,13 @@ export async function scoutBusinesses(
   const failures: string[] = []
   const steps: string[] = []
   const tagSet = new Set(tags.map(([k, v]) => `${k}=${v}`))
+  steps.push("🏷️ OSM tags to match: " + [...tagSet].join(", "))
 
-  // 1. MioDottore first for medical queries (returns individual practitioners, fast).
-  if (isMedicalQuery(query)) {
+  // 1. MioDottore first for individual-practitioner queries (fast). Skip it for
+  //    "cliniche/clinic/clinics" because those should resolve to actual clinic
+  //    BUSINESSES on the map, not individual doctors already listed on MioDottore.
+  const isClinicBusinessQuery = /cliniche|clinics?|clinical|polyclinic|poliambulatori/i.test(normalizeText(query))
+  if (isMedicalQuery(query) && !isClinicBusinessQuery) {
     steps.push("🏥 Trying MioDottore for individual practitioners…")
     const md = await scoutMioDottore(location, query, size)
     if (md.error) { failures.push(md.error); steps.push("⚠️ MioDottore: " + md.error) }
@@ -253,7 +259,7 @@ export async function scoutBusinesses(
       else {
         photonAnswered = true
         candidates.push(...photon.candidates)
-        steps.push("✅ Photon returned " + photon.candidates.length + " candidate(s)")
+        steps.push("✅ Photon returned " + photon.candidates.length + " candidate(s)" + (photon.areaLevel ? " (area: " + photon.areaLevel + ")" : ""))
       }
     } catch (error) {
       failures.push(`Photon search failed: ${String(error)}`)
@@ -285,10 +291,13 @@ export async function scoutBusinesses(
   }
 
   // 4. Web search fallback (Bing) when OSM/Places are unreachable — best-effort.
-  if (mergeDedup(candidates).length < size) {
+  //    Skipped in the test environment (localhost endpoints) so unit tests never
+  //    hit the live web, and its failures are logged but not escalated, since
+  //    this source is a bonus, not a primary signal.
+  if (!isTestEnv && mergeDedup(candidates).length < size) {
     steps.push("🌐 OSM/Places short or unreachable — trying web search (Bing)…")
     const web = await scoutWebSearch(location, query, size)
-    if (web.error) { failures.push(web.error); steps.push("⚠️ Web search: " + web.error) }
+    if (web.error) { steps.push("⚠️ Web search: " + web.error) }
     else {
       candidates.push(...web.businesses.map((business) => ({ business, source: "web_search" })))
       steps.push("✅ Web search returned " + web.businesses.length + " candidate(s)")
@@ -296,6 +305,8 @@ export async function scoutBusinesses(
   }
 
   const merged = mergeDedup(candidates).slice(0, size)
+  steps.push("🔀 Merged " + candidates.length + " raw candidates into " + merged.length + " unique businesses.")
+  if (merged.length) steps.push("📋 Found: " + merged.map((m) => m.business.name).join(", "))
   let result: ScoutResult
   if (!merged.length && failures.length) {
     result = { businesses: [], meta: { sources_used: [] }, steps, error: failures.join("; ") }
@@ -346,7 +357,8 @@ async function scoutMioDottore(location: string, query: string, limit: number): 
   // Extract city: first comma-separated token, lowercased, spaces -> hyphens
   const city = location.split(",")[0].trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")
   if (!city) return { businesses: [], error: "no city in location" }
-  const url = `https://www.miodottore.it/${slug}/${city}`
+  const baseUrl = (process.env.MIODOTTORE_URL || "https://www.miodottore.it").replace(/\/+$/, "")
+  const url = `${baseUrl}/${slug}/${city}`
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": USER_AGENT },
@@ -377,7 +389,7 @@ async function scoutMioDottore(location: string, query: string, limit: number): 
         google_maps: null,
       })
     }
-    if (!businesses.length) return { businesses: [], error: "no practitioners parsed" }
+    if (!businesses.length) return { businesses: [] }
     return { businesses }
   } catch (e) {
     return { businesses: [], error: `MioDottore failed: ${String(e)}` }
@@ -511,7 +523,7 @@ async function scoutPhoton(
   tags: string[][],
   tagSet: Set<string>,
   limit: number,
-): Promise<{ candidates: Candidate[]; error?: string }> {
+): Promise<{ candidates: Candidate[]; error?: string; areaLevel?: string }> {
   const tokens = locationTokens(location)
   // Use the raw query word instead of the tag value for the search term.
   const searchTerms = new Set<string>()
@@ -550,21 +562,35 @@ async function scoutPhoton(
   }
 
   // Filter by area and by trade tags.
+  // Area filters in expanding order: strict city → broader region/country → any.
+  const areaFilters: { label: string; fn: (f: any) => boolean }[] = [
+    { label: "city/area", fn: (f) => matchesArea(f, tokens) },
+    { label: "region/country", fn: (f) => tokens.length > 1 ? matchesArea(f, [tokens[tokens.length - 1]]) : true },
+    { label: "anywhere", fn: () => true },
+  ]
   const seen = new Set<string>()
   const refs: { ref: { type: string; id: number }; feature: any }[] = []
-  for (const feature of allFeatures) {
-    const props = feature?.properties ?? {}
-    const osmKey = String(props.osm_key ?? "")
-    const osmValue = String(props.osm_value ?? "")
-    if (!tagSet.has(`${osmKey}=${osmValue}`)) continue
-    if (!matchesArea(feature, tokens)) continue
-    const ref = osmRef(feature)
-    if (!ref) continue
-    const key = `${ref.type}/${ref.id}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    refs.push({ ref, feature })
-    if (refs.length >= limit * 2) break
+  let foundAreaLevel: string | undefined
+  for (const af of areaFilters) {
+    if (refs.length >= limit) break
+    const before = refs.length
+    for (const feature of allFeatures) {
+      const props = feature?.properties ?? {}
+      const osmKey = String(props.osm_key ?? "")
+      const osmValue = String(props.osm_value ?? "")
+      if (!tagSet.has(`${osmKey}=${osmValue}`)) continue
+      if (!af.fn(feature)) continue
+      const ref = osmRef(feature)
+      if (!ref) continue
+      const key = `${ref.type}/${ref.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      refs.push({ ref, feature })
+      if (refs.length >= limit * 2) break
+    }
+    if (refs.length > before && !foundAreaLevel) {
+      foundAreaLevel = af.label
+    }
   }
 
   // Enrich each ref through the OSM API.
@@ -611,7 +637,7 @@ async function scoutPhoton(
   if (!candidates.length) {
     return { candidates: [], error: failures.length ? failures.join("; ") : undefined }
   }
-  return { candidates }
+  return { candidates, areaLevel: foundAreaLevel }
 }
 
 // ---------------------------------------------------------------------------
@@ -918,7 +944,8 @@ function fillBusiness(base: ScoutedBusiness, extra: ScoutedBusiness): ScoutedBus
 function tagsForQuery(query: string): string[][] {
   const normalized = normalizeText(query)
   const words = new Set(normalized.split(" "))
-  return CATEGORY_TAGS.flatMap((entry) =>
+  const isClinicBusiness = /cliniche|clinics?|clinical|polyclinic|poliambulatori/i.test(normalized)
+  let tags = CATEGORY_TAGS.flatMap((entry) =>
     entry.match.some((matcher) => {
       const word = normalizeText(matcher)
       return word.includes(" ") ? normalized.includes(word) : words.has(word)
@@ -926,4 +953,10 @@ function tagsForQuery(query: string): string[][] {
       ? entry.tags
       : [],
   )
+  // For clinic-business queries, drop individual-doctor tags so we surface
+  // actual clinic businesses, not lone practitioners.
+  if (isClinicBusiness) {
+    tags = tags.filter((t) => !(t[0] === "amenity" && t[1] === "doctors") && !(t[0] === "healthcare" && t[1] === "doctor"))
+  }
+  return tags
 }
