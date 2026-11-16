@@ -1,4 +1,4 @@
-process.env.ELITZA_HOME = "/tmp/ebt-r2"
+process.env.AI_ENABLEMENT_HOME = "/tmp/ebt-r2"
 const { recall, storeEpisodic } = await import("../src/memory.ts")
 const { db } = await import("../src/db.ts")
 

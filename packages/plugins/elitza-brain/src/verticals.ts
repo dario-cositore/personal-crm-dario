@@ -5,16 +5,16 @@
  * outreach voice, env-var checklist, and a couple of playbooks. Verticals
  * turn "AI Enabler" from generic into a repeatable, priceable product.
  *
- * Stored under ~/.elitza/verticals/<name>/vertical.json (plus optional
+ * Stored under ~/.ai-enablement-agent/verticals/<name>/vertical.json (plus optional
  * playbook .md files). Seeded once; operator edits survive restarts.
  */
 
 import fs from "node:fs"
 import path from "node:path"
-import { ELITZA_HOME as _ELITZA_HOME } from "./db.js"
+import { AI_ENABLEMENT_HOME as _AI_ENABLEMENT_HOME } from "./db.js"
 import { soulGet, soulSet } from "./soul.js"
 
-export function verticalsDir(): string { return path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "verticals") }
+export function verticalsDir(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "verticals") }
 
 export interface VerticalPack {
   name: string
@@ -110,7 +110,7 @@ export function seedVerticals(): string[] {
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(file, JSON.stringify(pack, null, 2), { mode: 0o644 })
     // Seed playbooks into brain procedural dir too.
-    const procDir = path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "brain", "procedural")
+    const procDir = path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "brain", "procedural")
     fs.mkdirSync(procDir, { recursive: true })
     for (const pb of pack.playbooks) {
       const pbPath = path.join(procDir, `${pb.name}.md`)

@@ -13,7 +13,7 @@
  *
  * Storage:
  *   - bundled copies live next to this module (packages/.../worksheets)
- *   - on load they are seeded into ~/.elitza/brain/worksheets (never overwriting)
+ *   - on load they are seeded into ~/.ai-enablement-agent/brain/worksheets (never overwriting)
  *   - a "pull" copies the seeded file into the client's pipeline folder and
  *     attaches it as a client_asset of kind "worksheet".
  */
@@ -21,7 +21,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { BRAIN_DIR, ELITZA_HOME, nowISO } from "./db.js"
+import { BRAIN_DIR, AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 import { addAsset, getClient, listAssets, logInteraction, firstConfiguredStage, type Client } from "./crm.js"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -146,7 +146,7 @@ export function pullWorksheet(clientId: number, worksheetId: string): PullResult
   if (!fs.existsSync(src)) throw new Error(`Worksheet file missing on disk: ${src}`)
 
   const stamp = new Date().toISOString().slice(0, 10)
-  const dir = path.join(ELITZA_HOME, "pipeline", stamp)
+  const dir = path.join(AI_ENABLEMENT_HOME, "pipeline", stamp)
   fs.mkdirSync(dir, { recursive: true })
   const dest = path.join(dir, `C${clientId}-worksheet-${w.id}.html`)
   fs.copyFileSync(src, dest)

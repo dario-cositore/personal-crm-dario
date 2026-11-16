@@ -22,7 +22,7 @@ cd packages/plugins/elitza-brain
 bun run script/crm-view.ts
 ```
 
-It loads `~/.elitza/.env` the same way the launcher does, so `XIAOMI_API_KEY`, `GOOGLE_MAPS_API_KEY` and `RESEND_API_KEY` are all available to the screens that need them. When the engine stops, the house stops with it.
+It loads `~/.ai-enablement-agent/.env` the same way the launcher does, so `XIAOMI_API_KEY`, `GOOGLE_MAPS_API_KEY` and `RESEND_API_KEY` are all available to the screens that need them. When the engine stops, the house stops with it.
 
 > **It is a local tool, not a website.** The port has no login today and binds every interface, so treat it like any other unauthenticated local service: do not forward it to the internet. A loopback-only default is on the roadmap.
 
@@ -69,10 +69,10 @@ Everything the page does is a plain route over the same brain modules, so anythi
 | `POST /api/scout`, `POST /api/enrich` | scout a place, enrich a client |
 | `POST /api/log`, `POST /api/asset` | record an interaction, read an asset file |
 
-Asset reads are restricted to `~/.elitza`, `/tmp` and `~/.openclaw` — it is a viewer, not a file server.
+Asset reads are restricted to `~/.ai-enablement-agent`, `/tmp` and `~/.openclaw` — it is a viewer, not a file server.
 
 ## Guarantees
 
-- One database (`~/.elitza/brain/crm.db`), one set of modules (`crm`, `outreach`, `production`, `scouting`, `enrichment`). The house and the TUI cannot disagree.
+- One database (`~/.ai-enablement-agent/brain/crm.db`), one set of modules (`crm`, `outreach`, `production`, `scouting`, `enrichment`). The house and the TUI cannot disagree.
 - No send without approval, exactly as in the terminal: an unapproved row comes back refused with a reason.
 - Client PII stays out of the memory index, because the CRM is its own file.

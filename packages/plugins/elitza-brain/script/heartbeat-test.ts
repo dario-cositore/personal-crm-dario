@@ -1,6 +1,6 @@
 /**
  * Heartbeat test — proves the loop actually tends and reflects against a
- * throwaway ELITZA_HOME (never touches the real brain).
+ * throwaway AI_ENABLEMENT_HOME (never touches the real brain).
  *
  * Run: bun run script/heartbeat-test.ts
  */
@@ -8,7 +8,7 @@
 import assert from "node:assert"
 
 const home = `/tmp/elitza-heartbeat-${Date.now()}`
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 process.env.ELITZA_BRAIN_DEBUG = "1"
 
 const { storeEpisodic, getMetamemory, recall } = await import("../src/memory.ts")

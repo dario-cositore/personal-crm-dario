@@ -9,7 +9,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { BRAIN_DIR, ELITZA_HOME, MAX_EPISODIC, MAX_SEMANTIC } from "./db.js"
+import { BRAIN_DIR, AI_ENABLEMENT_HOME, MAX_EPISODIC, MAX_SEMANTIC } from "./db.js"
 import { getPersonality } from "./soul.js"
 
 const SENSITIVE_KEY = /api[_-]?key|token|secret|password|authorization|credential/i
@@ -129,7 +129,7 @@ export function configSection(section: string, toolNames: string[]): string {
       })),
     },
     brain: {
-      home: ELITZA_HOME,
+      home: AI_ENABLEMENT_HOME,
       brain_dir: BRAIN_DIR,
       soul_db: path.join(BRAIN_DIR, "soul_v2.db"),
       max_episodic: MAX_EPISODIC,
@@ -167,7 +167,7 @@ export function validateConfig(): string[] {
     // Check if opencode console credential exists in the database.
     let hasConsoleCred = false
     try {
-      const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+      const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
       if (fs.existsSync(dbPath)) {
         hasConsoleCred = true
       }
@@ -185,13 +185,13 @@ export function validateConfig(): string[] {
 
   if (!fs.existsSync(BRAIN_DIR)) warnings.push(`Brain directory missing: ${BRAIN_DIR}`)
 
-  const hooksDir = path.join(ELITZA_HOME, "hooks")
+  const hooksDir = path.join(AI_ENABLEMENT_HOME, "hooks")
   if (!fs.existsSync(hooksDir)) warnings.push(`Hooks directory missing: ${hooksDir}`)
 
-  const rolesDir = path.join(ELITZA_HOME, "roles")
+  const rolesDir = path.join(AI_ENABLEMENT_HOME, "roles")
   if (!fs.existsSync(rolesDir)) warnings.push(`Roles directory missing: ${rolesDir}`)
 
-  const personasDir = path.join(ELITZA_HOME, "personas")
+  const personasDir = path.join(AI_ENABLEMENT_HOME, "personas")
   if (!fs.existsSync(personasDir)) warnings.push(`Personas directory missing: ${personasDir}`)
 
   return warnings

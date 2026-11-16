@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "elitza-ho-test-"))
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 
 const { generateHandover, verifyHandover } = await import("./handover.js")
 

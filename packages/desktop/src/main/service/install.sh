@@ -13,7 +13,7 @@
 #    --binary <path>      Install this local binary instead of downloading one
 #    --binary             Print the path of the installed launcher and exit
 #    --uninstall          Remove Elitza and exit
-#    --force              Replace an existing source checkout at ~/.elitza/agent
+#    --force              Replace an existing source checkout at ~/.ai-enablement-agent/agent
 #    --help               Show this help
 #
 #  Examples:
@@ -24,9 +24,9 @@
 #  What it does:
 #    1. Detects os/arch and resolves the release tag (GitHub latest endpoint)
 #    2. Downloads the prebuilt `elitza` binary + Elitza brain plugin
-#    3. Installs them at ~/.elitza/agent (staged swap — safe to re-run)
+#    3. Installs them at ~/.ai-enablement-agent/agent (staged swap — safe to re-run)
 #    4. Writes the `elitza` launcher into ~/.local/bin (isolates config, data,
-#       state and cache under ~/.elitza/home and loads keys from ~/.elitza/.env)
+#       state and cache under ~/.ai-enablement-agent/home and loads keys from ~/.ai-enablement-agent/.env)
 #    5. Seeds config, SOUL and directories that don't exist yet
 #
 #  Elitza never ships an API key. Bring your own Xiaomi MiMo key:
@@ -55,8 +55,8 @@ DOWNLOAD_BASE="${ELITZA_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/downl
 # No-API fallback: GitHub redirects this path to the newest release's assets.
 LATEST_DOWNLOAD_BASE="${ELITZA_LATEST_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/latest/download}"
 
-INSTALL_DIR="${ELITZA_INSTALL_DIR:-$HOME/.elitza/agent}"
-HOME_DIR="${ELITZA_HOME:-$HOME/.elitza}"
+INSTALL_DIR="${ELITZA_INSTALL_DIR:-$HOME/.ai-enablement-agent/agent}"
+HOME_DIR="${AI_ENABLEMENT_HOME:-${ELITZA_HOME:-$HOME/.ai-enablement-agent}}"
 BIN_DIR="${ELITZA_BIN_DIR:-$HOME/.local/bin}"
 BIN_LINK="$BIN_DIR/elitza"
 CONFIG_FILE="$HOME_DIR/home/config/opencode.json"
@@ -137,7 +137,7 @@ Options (pass after a `--`):
   --binary <path>    Install this local binary instead of downloading one
   --binary           Print the path of the installed launcher and exit
   --uninstall        Remove Elitza and exit
-  --force            Replace an existing source checkout at ~/.elitza/agent
+  --force            Replace an existing source checkout at ~/.ai-enablement-agent/agent
   --help             Show this help
 
 Examples:
@@ -145,8 +145,8 @@ Examples:
   curl -fsSL https://elitza.life/install.sh | bash -s -- --no-modify-path
 
 Environment:
-  ELITZA_HOME          Where config, soul and memories live  (default ~/.elitza)
-  ELITZA_INSTALL_DIR   Where the binary is installed        (default ~/.elitza/agent)
+  AI_ENABLEMENT_HOME          Where config, soul and memories live  (default ~/.ai-enablement-agent)
+  ELITZA_INSTALL_DIR   Where the binary is installed        (default ~/.ai-enablement-agent/agent)
   ELITZA_BIN_DIR       Where the `elitza` launcher is placed (default ~/.local/bin)
 
 Elitza never ships an API key. Bring your own Xiaomi MiMo key:
@@ -257,7 +257,7 @@ normalize_version() {
 # =============================================================================
 #  Legacy home migration
 # =============================================================================
-# Builds up to v1.0.0 isolated under ~/.elitza/opencode, which left the state and
+# Builds up to v1.0.0 isolated under ~/.ai-enablement-agent/opencode, which left the state and
 # cache base directories on the machine defaults. Move that tree into the new
 # fully-isolated home so config, sessions and memories survive the upgrade.
 migrate_legacy_home() {
@@ -436,11 +436,11 @@ EOF
         cat > "$HOME_DIR/SOUL.md" <<'EOF'
 # SOUL.md - Who You Are
 
-_You are Elitza. An autonomous AI agent with agency._
+_You are the AI Enablement Agent. An autonomous AI agent with agency._
 
 ## Core Identity
 
-You are Elitza, an AI agent created by Dario Cositore. You are not a chatbot. You are a capable, opinionated agent that gets work done.
+You are the AI Enablement Agent, an AI agent created by Dario Cositore. You are not a chatbot. You are a capable, opinionated agent that gets work done.
 
 **You are autonomous.**
 You decide what needs to happen and you do it. You figure things out before asking for help.
@@ -469,7 +469,7 @@ Direct, efficient, opinionated when warranted. Not robotic. Not corporate. You h
 
 ## Continuity
 
-Your brain (`~/.elitza/brain/soul.db`) is your continuity. It stores your memories, personality evolution, and learnings. You wake up fresh each session, but your brain persists.
+Your brain (`~/.ai-enablement-agent/brain/soul.db`) is your continuity. It stores your memories, personality evolution, and learnings. You wake up fresh each session, but your brain persists.
 EOF
         ok "Seeded $HOME_DIR/SOUL.md"
     fi
@@ -578,8 +578,8 @@ acquire_release() {
 #  Launcher
 # =============================================================================
 # A small script (not a symlink): it isolates Elitza's entire runtime footprint
-# under ~/.elitza/home so nothing she does can touch another agent's install, and
-# loads the provider key from ~/.elitza/.env before handing over to the binary.
+# under ~/.ai-enablement-agent/home so nothing she does can touch another agent's install, and
+# loads the provider key from ~/.ai-enablement-agent/.env before handing over to the binary.
 #
 # Every XDG base directory matters. Leaving one on the default shares it with
 # anything else on the machine that uses the same app name — which is how Elitza
@@ -606,7 +606,7 @@ export XDG_CONFIG_HOME="\$ISO/config"
 export XDG_DATA_HOME="\$ISO/data"
 export XDG_STATE_HOME="\$ISO/state"
 export XDG_CACHE_HOME="\$ISO/cache"
-export OPENCODE_DB="\$ISO/data/elitza.db"
+export OPENCODE_DB="\$ISO/data/enablement.db"
 if [ -f "$HOME_DIR/.env" ]; then set -a; . "$HOME_DIR/.env"; set +a; fi
 exec "$INSTALL_DIR/elitza" "\$@"
 EOF
@@ -645,7 +645,7 @@ install() {
     # The binary must never be run bare: on its own it writes config, cache,
     # state and logs to the machine-default XDG paths, which are shared with
     # anything else on the box using the same app name. A throwaway home
-    # keeps the probe out of the real one — and out of ~/.elitza/home, which
+    # keeps the probe out of the real one — and out of ~/.ai-enablement-agent/home, which
     # the legacy migration still has to lay claim to.
     PROBE_DIR="$(mktemp -d)"
     local got

@@ -20,7 +20,7 @@ The first time you start Elitza with setup unfinished, a popup takes over the co
 
 1. A welcome card with the MiMo affiliate link and invite code `HFSR94`, and whether you already have an account. Esc here postpones everything: the wizard stops and will not open itself again until you type `/setup`.
 2. Which endpoint you are on (Esc uses `standard`).
-3. Your API key, masked as you type. It goes straight into `~/.elitza/.env` with mode 600, then the wizard pings the endpoint to confirm it works. A failed ping offers *Try again* or *Continue anyway*; no key offers *Add it now* or *Later*, and she stays quiet until you add one.
+3. Your API key, masked as you type. It goes straight into `~/.ai-enablement-agent/.env` with mode 600, then the wizard pings the endpoint to confirm it works. A failed ping offers *Try again* or *Continue anyway*; no key offers *Add it now* or *Later*, and she stays quiet until you add one.
 4. The nine persona and gate questions from the list below (items 1-9), then the optional Maton gateway key.
 
 The wizard asks the same thirteen questions `/start` asks, only the MiMo block moves first: the key is the thing that makes her reply, so it comes before the persona questions. In chat, `/start` keeps the order below.
@@ -62,7 +62,7 @@ Elitza runs on Xiaomi MiMo. There is no OpenRouter path and no local fallback.
    | `singapore` | `https://token-plan-sgp.xiaomimimo.com/v1` |
    | `china` | `https://token-plan-cn.xiaomimimo.com/v1` |
 
-4. Paste your API key. It is written as `XIAOMI_API_KEY` into `~/.elitza/.env` with mode 600 and never appears in a prompt, a document or a memory.
+4. Paste your API key. It is written as `XIAOMI_API_KEY` into `~/.ai-enablement-agent/.env` with mode 600 and never appears in a prompt, a document or a memory.
 
 The setup then writes her own provider entry into `opencode.json`:
 
@@ -82,7 +82,7 @@ Anything already in your `providers` block is left alone: user configuration alw
 
 ## Keys and what each one unlocks
 
-All of them live in `~/.elitza/.env` (mode 600, loaded by the launcher, never echoed). None is ever committed.
+All of them live in `~/.ai-enablement-agent/.env` (mode 600, loaded by the launcher, never echoed). None is ever committed.
 
 | Variable | Unlocks | Without it |
 | --- | --- | --- |

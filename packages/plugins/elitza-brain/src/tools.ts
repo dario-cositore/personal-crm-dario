@@ -17,7 +17,7 @@ import { ensureKnowledge, readPlaybook } from "./knowledge.js"
 import path from "node:path"
 import { generateHandover, verifyHandover } from "./handover.js"
 import { listVerticals, getVertical, getActiveVertical, setActiveVertical, seedVerticals } from "./verticals.js"
-import { ELITZA_HOME } from "./db.js"
+import { AI_ENABLEMENT_HOME } from "./db.js"
 import { getPersonality } from "./soul.js"
 import { issue, verifyToken, delegate, revoke, listIssued, listRevoked, covers, attachSession, detachSession, getSessionCapability } from "./capability.js"
 import { addTrigger, listTriggers, setTriggerStatus, deleteTrigger, processTriggers } from "./crm.js"
@@ -370,7 +370,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
     {
       name: "gapfeed_build_pipeline",
       description:
-        "Run the outreach pipeline immediately: pull recent high-urgency signals from the local gapfeed radar and write a markdown outreach draft for each one not already drafted, into ~/.elitza/pipeline/<date>/. Never sends anything — drafts wait for a human read. Bypasses the 6-hour heartbeat interval.",
+        "Run the outreach pipeline immediately: pull recent high-urgency signals from the local gapfeed radar and write a markdown outreach draft for each one not already drafted, into ~/.ai-enablement-agent/pipeline/<date>/. Never sends anything — drafts wait for a human read. Bypasses the 6-hour heartbeat interval.",
       input: { type: "object", properties: {} },
       execute: async () => {
         const result = await pollPipeline({ force: true })
@@ -710,7 +710,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
     {
       name: "outreach",
       description:
-        "Run the email outreach pipeline (Resend, batch approval). Operations: add (client_id — push a CRM client in at stage scouted), list (stage, limit), draft (client_id, subject, body — writes a reviewable file to ~/.elitza/pipeline/<date>/ with the opt-out footer; nothing is sent), approve (ids — mark drafts approved after a human read of the files), send (ids — send only approved drafts, then move the client to contacted/followup_1/2/3, set last_contact and schedule the next touch at +3/+7/+14 days), due (list follow-ups whose day has come), queue (draft every due follow-up now — what the heartbeat does each tick), dispose (id, verdict yes|no|stale, note — stops the cadence dead and moves the client: yes to production, no and stale to the nurture list), sweep (close cadences that ran all four touches in silence). Sending needs RESEND_API_KEY and RESEND_FROM in the mode-600 .env.",
+        "Run the email outreach pipeline (Resend, batch approval). Operations: add (client_id — push a CRM client in at stage scouted), list (stage, limit), draft (client_id, subject, body — writes a reviewable file to ~/.ai-enablement-agent/pipeline/<date>/ with the opt-out footer; nothing is sent), approve (ids — mark drafts approved after a human read of the files), send (ids — send only approved drafts, then move the client to contacted/followup_1/2/3, set last_contact and schedule the next touch at +3/+7/+14 days), due (list follow-ups whose day has come), queue (draft every due follow-up now — what the heartbeat does each tick), dispose (id, verdict yes|no|stale, note — stops the cadence dead and moves the client: yes to production, no and stale to the nurture list), sweep (close cadences that ran all four touches in silence). Sending needs RESEND_API_KEY and RESEND_FROM in the mode-600 .env.",
       input: {
         type: "object",
         properties: {
@@ -735,6 +735,11 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               body: {
                 type: "string",
                 description: "Email body in your voice: short, concrete, no marketing fluff, one ask. The opt-out footer is appended automatically.",
+              },
+              from: {
+                type: "string",
+                description:
+                  "Sender address or preset: sales, support, hello, outreach, cold. Full email also accepted (e.g. dario@mail.dariocositore.com). Defaults to RESEND_FROM env var.",
               },
               variant: { type: "string", description: "A/B variant label for this draft (optional)." },
               verdict: {
@@ -781,6 +786,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 subject: String(op.subject ?? ""),
                 body: String(op.body ?? ""),
                 variant: op.variant !== undefined ? String(op.variant) : undefined,
+                from: op.from !== undefined ? String(op.from) : undefined,
               })
               return {
                 content: `Drafted touch ${pipelineRow.touch + 1} for client ${op.client_id}: ${filePath}\nNothing sent — read it, edit it if you want, then approve with outreach approve.`,
@@ -1110,7 +1116,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
     {
       name: "backup",
       description:
-        "Back up Elitza's whole home (~/.elitza) to a tar.gz. Operations: create (optional out path), list (show last backups in ~/). Restore is manual: extract the archive over ~/.elitza after stopping the engine.",
+        "Back up Elitza's whole home (~/.ai-enablement-agent) to a tar.gz. Operations: create (optional out path), list (show last backups in ~/). Restore is manual: extract the archive over ~/.ai-enablement-agent after stopping the engine.",
       input: {
         type: "object",
         properties: {

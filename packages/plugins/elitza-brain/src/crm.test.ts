@@ -64,8 +64,8 @@ describe("clients", () => {
     expect(getClient(client.id)?.instagram).toBeNull()
   })
 
-  test("an unknown status is rejected and names the vocabulary", () => {
-    expect(() => addClient({ name: "Nope", status: "bogus" })).toThrow(/Unknown status/)
+  test("an empty status is rejected and the vocabulary is exported", () => {
+    expect(() => addClient({ name: "Nope", status: "" })).toThrow(/Status cannot be empty/)
     expect(CLIENT_STATUSES).toContain("scouted")
     expect(CLIENT_STATUSES).toContain("done")
   })

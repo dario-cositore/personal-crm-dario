@@ -3,7 +3,7 @@
  *
  * Direct TypeScript port of the schema in the legacy Python `brain_v2.py`.
  * The database file and every table are byte-compatible with her original
- * brain (`~/.elitza/brain/soul_v2.db`) — her memories, links, recall log,
+ * brain (`~/.ai-enablement-agent/brain/soul_v2.db`) — her memories, links, recall log,
  * soul state, and session log all live in the same place as before.
  */
 
@@ -16,8 +16,9 @@ import path from "node:path"
 // Locations
 // ---------------------------------------------------------------------------
 
-export const ELITZA_HOME = process.env.ELITZA_HOME ?? path.join(os.homedir(), ".elitza")
-export const BRAIN_DIR = path.join(ELITZA_HOME, "brain")
+export const AI_ENABLEMENT_HOME = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? path.join(os.homedir(), ".ai-enablement-agent")
+export const ELITZA_HOME = AI_ENABLEMENT_HOME // deprecated: use AI_ENABLEMENT_HOME
+export const BRAIN_DIR = path.join(AI_ENABLEMENT_HOME, "brain")
 export const DB_PATH = path.join(BRAIN_DIR, "soul_v2.db")
 
 // ---------------------------------------------------------------------------

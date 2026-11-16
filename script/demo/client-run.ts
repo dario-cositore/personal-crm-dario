@@ -8,7 +8,7 @@
  * and the handover generator all execute for real against a scratch home.
  *
  * Run from the repository root via record.sh, which sets DEMO_REPO, the
- * scratch ELITZA_HOME and the mock endpoints first.
+ * scratch AI_ENABLEMENT_HOME and the mock endpoints first.
  */
 
 import { homedir } from "node:os"

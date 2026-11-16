@@ -19,12 +19,12 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { BRAIN_DIR, ELITZA_HOME, nowISO, parseJSON } from "./db.js"
+import { BRAIN_DIR, AI_ENABLEMENT_HOME, nowISO, parseJSON } from "./db.js"
 import { soulGet, soulSet } from "./soul.js"
 import { engineConfigPath } from "./configview.js"
 
 const STATE_KEY = "onboarding"
-const PERSONA_FILE = path.join(ELITZA_HOME, "PERSONA.md")
+const PERSONA_FILE = path.join(AI_ENABLEMENT_HOME, "PERSONA.md")
 const CONFIG_FILE = engineConfigPath()
 
 /**
@@ -368,7 +368,7 @@ export function applyGates(gates: Gate[]): Gate[] {
 /** What a stored secret looks like in the answers — the value itself is gone. */
 export const SECRET_SAVED = "(saved, mode 600)"
 
-const ENV_FILE = path.join(ELITZA_HOME, ".env")
+const ENV_FILE = path.join(AI_ENABLEMENT_HOME, ".env")
 const MATON_FILE = path.join(os.homedir(), ".config", "maton", "credentials.env")
 
 /** Where each secret question writes, and under which variable name. */
@@ -427,7 +427,7 @@ export function saveSecretValue(questionKey: string, value: string): boolean {
 }
 
 /**
- * Load ~/.elitza/.env into this process's environment, never overwriting an
+ * Load ~/.ai-enablement-agent/.env into this process's environment, never overwriting an
  * existing variable. The launcher sources the file at start; a key entered
  * through the wizard lands later, so the engine loads it here before it ever
  * resolves a provider credential.
@@ -612,7 +612,7 @@ export function buildPersona(state: OnboardingState): string {
 /** Write the persona file. Returns the path, or null on failure. */
 export function writePersona(state: OnboardingState): string | null {
   try {
-    fs.mkdirSync(ELITZA_HOME, { recursive: true })
+    fs.mkdirSync(AI_ENABLEMENT_HOME, { recursive: true })
     fs.writeFileSync(PERSONA_FILE, buildPersona(state))
     return PERSONA_FILE
   } catch {

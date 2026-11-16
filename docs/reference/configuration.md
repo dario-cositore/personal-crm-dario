@@ -13,7 +13,7 @@ Elitza reads JSON and JSONC config files from your project, your home directory 
 | Global directory | `$XDG_CONFIG_HOME/opencode`, default `~/.config/opencode` | `packages/util/src/global-roots.ts` |
 | Global override | `OPENCODE_CONFIG_DIR` replaces the global directory | `packages/util/src/global.ts:79` |
 
-Inside an installed Elitza the launcher points `OPENCODE_CONFIG_DIR` and `XDG_CONFIG_HOME` at `~/.elitza/home/config`, so that is your global config file. Next to your code, `./elitza.json` and `./.elitza/` are what she reads per project ([install.md](../guide/install.md)).
+Inside an installed Elitza the launcher points `OPENCODE_CONFIG_DIR` and `XDG_CONFIG_HOME` at `~/.ai-enablement-agent/home/config`, so that is your global config file. Next to your code, `./elitza.json` and `./.ai-enablement-agent/` are what she reads per project ([install.md](../guide/install.md)).
 
 Load order runs lowest priority first: system policies, well-known sources, the global directory, explicit and direct files, project files, then content and managed settings. Project beats global. The system directory and MDM preferences load last and override everything. Scalar fields are replaced by the higher priority file, maps such as `providers` merge (`packages/core/src/config.ts`).
 
@@ -62,7 +62,7 @@ That block loads and produces an empty provider. Write `providers`. The plural k
 | Update policy | `update` | `disable`, `notify` or `auto` (`packages/schema/src/config.ts`) |
 | Shell, skills, instructions | `shell`, `skills`, `instructions`, `references` | Ambient paths and defaults (`packages/schema/src/config.ts`) |
 
-The interface keys live in their own file: `cli.json` in the global config directory (`~/.elitza/home/config/cli.json` when installed). It holds `theme` (`name` and `mode`), `keybinds`, `leader.timeout`, `diffs`, `animations`, `highlights`, `mouse`, `cursor`, `session`, `tabs` and `terminal` (`packages/cli/src/config/config.ts`, schema in `packages/cli/src/config/schema.ts` built from `packages/tui/src/config/index.tsx`). `/settings` in the TUI edits this file ([tui.md](tui.md#slash-commands)).
+The interface keys live in their own file: `cli.json` in the global config directory (`~/.ai-enablement-agent/home/config/cli.json` when installed). It holds `theme` (`name` and `mode`), `keybinds`, `leader.timeout`, `diffs`, `animations`, `highlights`, `mouse`, `cursor`, `session`, `tabs` and `terminal` (`packages/cli/src/config/config.ts`, schema in `packages/cli/src/config/schema.ts` built from `packages/tui/src/config/index.tsx`). `/settings` in the TUI edits this file ([tui.md](tui.md#slash-commands)).
 
 Full server schema: `packages/schema/src/config.ts`.
 
@@ -70,8 +70,8 @@ Full server schema: `packages/schema/src/config.ts`.
 
 | Variable | What it does | Source |
 | --- | --- | --- |
-| `ELITZA_HOME` | Brain root. Defaults to `~/.elitza`; personas, hooks, roles and the brain database hang off it | `packages/plugins/elitza-brain/src/db.ts:19` |
-| `OPENCODE_DB` | Session database path. The installed launcher sets `~/.elitza/home/data/elitza.db`; without it the path resolves under the data directory as `opencode.db` | `packages/cli/src/database-path.ts` |
+| `AI_ENABLEMENT_HOME` | Brain root. Defaults to `~/.ai-enablement-agent`; personas, hooks, roles and the brain database hang off it | `packages/plugins/elitza-brain/src/db.ts:19` |
+| `OPENCODE_DB` | Session database path. The installed launcher sets `~/.ai-enablement-agent/home/data/enablement.db`; without it the path resolves under the data directory as `opencode.db` | `packages/cli/src/database-path.ts` |
 | `OPENCODE_CONFIG_DIR` | Replaces the global config directory | `packages/util/src/global.ts` |
 | `XDG_CONFIG_HOME` | Base for config, app subdirectory `opencode`, default `~/.config` | `packages/util/src/global-roots.ts` |
 | `XDG_DATA_HOME` | Base for data, default `~/.local/share` | `packages/util/src/global-roots.ts` |
@@ -90,23 +90,23 @@ Full server schema: `packages/schema/src/config.ts`.
 | `ELITZA_BRAIN_DEBUG` | Appends plugin diagnostics to `/tmp/elitza-brain-debug.log` | `src/index.ts`, `src/pipeline.ts`, `src/heartbeat.ts` |
 | `CRM_VIEW_PORT`, `CRM_VIEW_NO_OPEN` | The [CRM house](../guide/crm-house.md): port to bind (default `8787`) and `1` to stop it opening the browser when it starts | `packages/plugins/elitza-brain/src/crmview.ts` |
 
-The four credential variables are read from `~/.elitza/.env`, which the launcher loads with `set -a` on every start. That file is mode 600, written only by the guided setup's secret questions, and never echoed: the soul stores the word "set", never the value.
+The four credential variables are read from `~/.ai-enablement-agent/.env`, which the launcher loads with `set -a` on every start. That file is mode 600, written only by the guided setup's secret questions, and never echoed: the soul stores the word "set", never the value.
 
-The app name inside the XDG directories is still `opencode` (`packages/util/src/global.ts`). Under an installed Elitza the launcher pins all four XDG bases plus `OPENCODE_CONFIG_DIR` and `OPENCODE_DB` under `~/.elitza/home`, so nothing leaks into machine-default paths ([install.md](../guide/install.md#what-the-launcher-does)).
+The app name inside the XDG directories is still `opencode` (`packages/util/src/global.ts`). Under an installed Elitza the launcher pins all four XDG bases plus `OPENCODE_CONFIG_DIR` and `OPENCODE_DB` under `~/.ai-enablement-agent/home`, so nothing leaks into machine-default paths ([install.md](../guide/install.md#what-the-launcher-does)).
 
 ## Databases
 
 | Database | Path | Holds |
 | --- | --- | --- |
-| Sessions | `~/.elitza/home/data/elitza.db` when installed (`OPENCODE_DB`) | Sessions, messages, inbox items, credentials, projects, events, permissions and worktrees (`packages/cli/src/database-path.ts`, tables in `packages/core/src/session/sql.ts` and siblings) |
-| Brain | `~/.elitza/brain/soul_v2.db` (`ELITZA_HOME` moves the root) | Episodic, semantic, procedural and emotional memories, recall log, session log (`packages/plugins/elitza-brain/src/db.ts`) |
-| CRM | `~/.elitza/brain/crm.db` | `clients`, `client_interactions`, `client_assets` and the outreach `pipeline` table — deliberately a separate file, so client data stays out of the memory index and can be backed up or wiped alone (`packages/plugins/elitza-brain/src/crm.ts`) |
+| Sessions | `~/.ai-enablement-agent/home/data/enablement.db` when installed (`OPENCODE_DB`) | Sessions, messages, inbox items, credentials, projects, events, permissions and worktrees (`packages/cli/src/database-path.ts`, tables in `packages/core/src/session/sql.ts` and siblings) |
+| Brain | `~/.ai-enablement-agent/brain/soul_v2.db` (`AI_ENABLEMENT_HOME` moves the root) | Episodic, semantic, procedural and emotional memories, recall log, session log (`packages/plugins/elitza-brain/src/db.ts`) |
+| CRM | `~/.ai-enablement-agent/brain/crm.db` | `clients`, `client_interactions`, `client_assets` and the outreach `pipeline` table — deliberately a separate file, so client data stays out of the memory index and can be backed up or wiped alone (`packages/plugins/elitza-brain/src/crm.ts`) |
 
 The brain plugin reads the session database through the same `OPENCODE_DB` value (`packages/plugins/elitza-brain/src/sessions.ts`), so one variable moves both.
 
 ## A worked example
 
-This is an example, not a recommended default. Drop it in `./elitza.json` for one project, or in `~/.elitza/home/config/` for everything.
+This is an example, not a recommended default. Drop it in `./elitza.json` for one project, or in `~/.ai-enablement-agent/home/config/` for everything.
 
 ```json
 {
@@ -133,7 +133,7 @@ This is an example, not a recommended default. Drop it in `./elitza.json` for on
 What each block does:
 
 - `model` points at the `elitza` provider below. This is exactly what guided setup writes after the MiMo signup (the guided setup offers `standard`, `europe`, `singapore` and `china` endpoints — token-plan hosts for the regional ones). See [guided setup](../guide/guided-setup.md).
-- `providers.elitza` declares the key she reads from `~/.elitza/.env` (`XIAOMI_API_KEY`) and the endpoint. The config-facing model key carries the `xiaomi/` prefix and `modelID` is the name the API actually receives — both are deliberate.
+- `providers.elitza` declares the key she reads from `~/.ai-enablement-agent/.env` (`XIAOMI_API_KEY`) and the endpoint. The config-facing model key carries the `xiaomi/` prefix and `modelID` is the name the API actually receives — both are deliberate.
 - Any other OpenAI-compatible endpoint follows the same shape (plural `providers` key, `package`, `settings`, `env`) — the guided setup simply refuses to offer anything but MiMo.
 - `permissions` lets `git status` run without asking, and sends every other shell command and file edit to the permission gate. Rules evaluate in order and the last match wins. Guided setup writes its own gates from your answers.
 

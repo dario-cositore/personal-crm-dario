@@ -178,7 +178,7 @@ export function generateHandover(options: HandoverOptions): HandoverResult {
     "",
     "## Environment and secrets",
     "",
-    "Names only. Values live in mode-600 files (for Elitza: ~/.elitza/.env, ~/.config/maton/credentials.env) or the host environment, and never appear in this document.",
+    "Names only. Values live in mode-600 files (for Elitza: ~/.ai-enablement-agent/.env, ~/.config/maton/credentials.env) or the host environment, and never appear in this document.",
     "",
     envVars.length
       ? envVars.map((name) => `- \`${name}\` — ${SECRET_HINT.test(name) ? "secret: mode-600 file, loaded, never echoed" : "plain configuration: host environment or config file"}`).join("\n")

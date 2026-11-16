@@ -15,7 +15,7 @@ import path from "node:path"
 // suffix (the launcher and mock harness both set OPENCODE_DB explicitly).
 export const ENGINE_DB =
   process.env.OPENCODE_DB ??
-  path.join(os.homedir(), ".elitza", "home", "data", "elitza.db")
+  path.join(os.homedir(), ".ai-enablement-agent", "home", "data", "enablement.db")
 
 interface EngineSession {
   id: string

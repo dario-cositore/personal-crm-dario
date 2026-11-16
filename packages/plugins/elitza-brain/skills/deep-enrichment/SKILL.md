@@ -133,5 +133,5 @@ When enriching a CRM client, use this skill's checklist to populate:
 
 Store the full report as a CRM asset (kind: "enrichment") so it persists with the client record.
 EOF
-cp "/home/dario/.elitza/skills/deep-enrichment/SKILL.md" "/home/dario/.openclaw/workspace/1. Dario Cositore/4. AI Enablement Agent/packages/plugins/elitza-brain/skills/deep-enrichment/SKILL.md"
+cp "/home/dario/.ai-enablement-agent/skills/deep-enrichment/SKILL.md" "/home/dario/.openclaw/workspace/1. Dario Cositore/4. AI Enablement Agent/packages/plugins/elitza-brain/skills/deep-enrichment/SKILL.md"
 echo "written"

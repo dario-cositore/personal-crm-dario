@@ -3,7 +3,7 @@
 #
 # Model responses are simulated by opencode-drive and the Places/Resend
 # endpoints point at local mocks (mocks.ts). The TUI, the brain plugin and
-# every tool run for real against a scratch ELITZA_HOME.
+# every tool run for real against a scratch AI_ENABLEMENT_HOME.
 #
 # Requirements: bun, ffmpeg, and script/demo dependencies installed
 # (cd script/demo && bun install). Run from anywhere.
@@ -32,7 +32,7 @@ done
 
 cd "$ROOT"
 env DEMO_REPO="$DEMO_REPO_LINK" \
-    ELITZA_HOME="$SCRATCH" \
+    AI_ENABLEMENT_HOME="$SCRATCH" \
     XIAOMI_API_KEY=demo-key-not-real \
     MOCK_PORT="$MOCK_PORT" \
     GOOGLE_PLACES_URL="http://127.0.0.1:$MOCK_PORT/v1/places:searchText" \

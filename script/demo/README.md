@@ -19,7 +19,7 @@ The recording is honest about its split, the way every drive demo is:
 | Layer | Source |
 | --- | --- |
 | TUI, layout, themes, keypress overlay | real — the dev checkout under `DEMO_REPO` |
-| Brain plugin, `client_scout`, `crm`, `outreach`, `playbook`, `handover` | real — executed against a scratch `ELITZA_HOME` (fresh `crm.db`, real pipeline files, real git evidence) |
+| Brain plugin, `client_scout`, `crm`, `outreach`, `playbook`, `handover` | real — executed against a scratch `AI_ENABLEMENT_HOME` (fresh `crm.db`, real pipeline files, real git evidence) |
 | Google Places and Resend HTTP calls | local mocks (`mocks.ts`) pointed at by `GOOGLE_PLACES_URL` / `RESEND_URL` — no account, no key, no live send |
 | Model responses | scripted by [opencode-drive](https://www.npmjs.com/package/opencode-drive) (`client-run.ts` queues them) |
 | Model identity in the UI | the real `elitza` provider block, `elitza/xiaomi/mimo-v2.6-flash` |

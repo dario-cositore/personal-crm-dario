@@ -1,6 +1,6 @@
 /**
  * Brain smoke test — exercises the ported memory/soul/emotion/prompt/learning/
- * sessions/config/doctor logic against a throwaway ELITZA_HOME (never touches
+ * sessions/config/doctor logic against a throwaway AI_ENABLEMENT_HOME (never touches
  * the real brain).
  *
  * Run: bun run script/smoke.ts
@@ -11,7 +11,7 @@ import fs from "node:fs"
 import { Database } from "bun:sqlite"
 
 const home = `/tmp/elitza-brain-smoke-${Date.now()}`
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 process.env.OPENCODE_DB = `${home}/engine.db`
 process.env.OPENCODE_CONFIG_DIR = `${home}/config`
 

@@ -3,7 +3,7 @@
  *
  * The order of operations, all of it local and reviewable:
  *   add      push a CRM client into the pipeline (stage scouted)
- *   draft    write the next touch as a file in ~/.elitza/pipeline/<date>/
+ *   draft    write the next touch as a file in ~/.ai-enablement-agent/pipeline/<date>/
  *   approve  batch-approve drafts after a human read of those files
  *   send     POST the approved drafts through Resend, then advance the stage
  *
@@ -26,22 +26,56 @@
  *
  * Config (env):
  *   RESEND_API_KEY      required to send; operator's own key, mode 600 .env
- *   RESEND_FROM         verified sender, e.g. "Dario Cositore <hello@domain>"
+ *   RESEND_FROM         default verified sender, e.g. "Dario Cositore <dario@mail.dariocositore.com>"
+ *   RESEND_FROM_SALES   cold outreach / sales sender (defaults to RESEND_FROM)
+ *   RESEND_FROM_SUPPORT support sender (defaults to RESEND_FROM)
+ *   RESEND_FROM_HELLO   soft-touch / hello sender (defaults to RESEND_FROM)
+ *   RESEND_FROM_OUTREACH cold outreach alias for RESEND_FROM_SALES
  *   OUTREACH_SIGNATURE  the line under the opt-out in every footer
  */
 
 import fs from "node:fs"
 import path from "node:path"
-import { ELITZA_HOME, nowISO } from "./db.js"
+import { AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 import { crmDb, getClient, logInteraction, updateClient, stageExists } from "./crm.js"
 import { slug } from "./pipeline.js"
 
 const DEFAULT_RESEND_URL = "https://api.resend.com/emails"
 const FETCH_TIMEOUT_MS = 10_000
-const PIPELINE_DIR = path.join(ELITZA_HOME, "pipeline")
+const PIPELINE_DIR = path.join(AI_ENABLEMENT_HOME, "pipeline")
 const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-/** Days to wait after each touch before the next one is due (0, +3, +7, +14). */
+/**
+ * Resolve a sender preset or full address to a verified "Name <email>" string.
+ *
+ * Presets (case-insensitive): sales, support, hello, outreach, cold.
+ * Each resolves to RESEND_FROM_<PRESET> env var, falling back to RESEND_FROM.
+ * A full email address (contains @) is used directly with the default display name.
+ * Undefined/empty falls back to RESEND_FROM.
+ */
+function resolveSender(input: string | undefined): string {
+  const fallback = process.env.RESEND_FROM?.trim() || ""
+  if (!input) return fallback
+  const trimmed = input.trim()
+  if (!trimmed) return fallback
+  const preset = trimmed.toLowerCase()
+  const presets: Record<string, string | undefined> = {
+    sales: process.env.RESEND_FROM_SALES?.trim(),
+    support: process.env.RESEND_FROM_SUPPORT?.trim(),
+    hello: process.env.RESEND_FROM_HELLO?.trim(),
+    outreach: process.env.RESEND_FROM_OUTREACH?.trim(),
+    cold: process.env.RESEND_FROM_OUTREACH?.trim(),
+  }
+  if (preset in presets) {
+    return presets[preset] || fallback
+  }
+  // Full address provided — use as-is (with default display name if bare email).
+  if (trimmed.includes("@")) {
+    if (trimmed.includes("<")) return trimmed
+    return `Dario Cositore <${trimmed}>`
+  }
+  return fallback
+}
 export const CADENCE_DAYS = [3, 7, 14]
 
 /** Stage reached once touch n has gone out. */
@@ -64,6 +98,7 @@ export interface OutreachRow {
 
 interface DraftFile {
   to: string
+  from: string
   subject: string
   body: string
   touch: number
@@ -139,7 +174,7 @@ export function getPipelineRow(id: number): OutreachRow | null {
  */
 export function writeDraft(
   clientId: number,
-  input: { subject: string; body: string; variant?: string },
+  input: { subject: string; body: string; variant?: string; from?: string },
 ): { filePath: string; row: OutreachRow } {
   const client = getClient(clientId)
   if (!client) throw new Error(`No client with id ${clientId}.`)
@@ -156,12 +191,13 @@ export function writeDraft(
   const touch = pipelineRow.touch + 1
   if (touch > 4) throw new Error("The 4-touch cadence is already complete for this client.")
 
+  const from = resolveSender(input.from)
   const day = nowISO().slice(0, 10)
   const dir = path.join(PIPELINE_DIR, day)
   const filePath = path.join(dir, `C${clientId}-${slug(subject, "draft")}.md`)
   fs.mkdirSync(dir, { recursive: true })
 
-  fs.writeFileSync(filePath, renderDraft(pipelineRow, client.email, subject, body, touch, "drafted", input.variant))
+  fs.writeFileSync(filePath, renderDraft(pipelineRow, client.email, from, subject, body, touch, "drafted", input.variant))
   crmDb().run(
     "UPDATE pipeline SET draft_path = ?, approved = 0, queued_touch = ?, variant = ?, updated_at = ? WHERE id = ?",
     [filePath, touch, input.variant ?? null, nowISO(), pipelineRow.id],
@@ -172,6 +208,7 @@ export function writeDraft(
 function renderDraft(
   pipelineRow: OutreachRow,
   to: string,
+  from: string,
   subject: string,
   body: string,
   touch: number,
@@ -184,6 +221,7 @@ function renderDraft(
     `client: ${pipelineRow.client_id}`,
     `touch: ${touch}`,
     `to: ${to}`,
+    `from: ${from}`,
     `subject: ${subject}`,
     `status: ${status}`,
     `created: ${nowISO()}`,
@@ -224,6 +262,7 @@ export function readDraft(filePath: string): DraftFile | null {
   }
   return {
     to: meta.to ?? "",
+    from: meta.from ?? (process.env.RESEND_FROM?.trim() || ""),
     subject: meta.subject ?? "",
     body: lines.slice(end + 1).join("\n").trim(),
     touch: Number(meta.touch ?? 1),
@@ -260,13 +299,13 @@ export interface SendResult {
  */
 export async function sendApproved(ids?: number[]): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim()
-  const from = process.env.RESEND_FROM?.trim()
+  const defaultFrom = process.env.RESEND_FROM?.trim()
   if (!apiKey) {
     throw new Error(
-      "RESEND_API_KEY is not set. Add your own Resend key to ~/.elitza/.env as RESEND_API_KEY=... (mode 600), plus RESEND_FROM=<verified sender>.",
+      "RESEND_API_KEY is not set. Add your own Resend key to ~/.ai-enablement-agent/.env as RESEND_API_KEY=... (mode 600), plus RESEND_FROM=<verified sender>.",
     )
   }
-  if (!from) throw new Error("RESEND_FROM is not set — the verified sender address Resend accepts.")
+  if (!defaultFrom) throw new Error("RESEND_FROM is not set — the verified sender address Resend accepts (used as fallback when a draft has no from).")
 
   const targets = ids?.length
     ? rows<OutreachRow>(`SELECT * FROM pipeline WHERE id IN (${ids.map(() => "?").join(",")})`, ids)
@@ -288,6 +327,7 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
       continue
     }
 
+    const from = resolveSender(draft.from) || defaultFrom
     const failure = await sendEmail(from, draft.to, draft.subject, draft.body)
     if (failure) {
       result.failed.push({ id: pipelineRow.id, reason: failure })

@@ -61,14 +61,14 @@ Entries are appended chronologically. Newest first.
 ## 2026-10-31 — Tier 1 batch: capability tokens, backups, tests
 
 ### Added
-- `packages/plugins/elitza-brain/src/capability.ts` — UCAN-inspired capability tokens: mint, verify, delegate (subset + expiry), revoke, covers, session attach/detach. Signed with Elitza's Ed25519 identity. Persisted issued/revoked/session maps under `~/.elitza`.
+- `packages/plugins/elitza-brain/src/capability.ts` — UCAN-inspired capability tokens: mint, verify, delegate (subset + expiry), revoke, covers, session attach/detach. Signed with Elitza's Ed25519 identity. Persisted issued/revoked/session maps under `~/.ai-enablement-agent`.
 - `packages/plugins/elitza-brain/src/capability.test.ts` — 10 tests.
-- `backup` tool (tools.ts) — tar.gz of `~/.elitza`, list/create.
+- `backup` tool (tools.ts) — tar.gz of `~/.ai-enablement-agent`, list/create.
 - Permission enforcement hook in `index.ts` — if a session has an attached capability token, it overrides the static ruleset (allow only if valid + covering).
 - `capability` tool (tools.ts) — mint/verify/delegate/revoke/list/revoked/attach/detach/session.
 - Tests: `verticals.test.ts`, `templates.test.ts`, `handover.test.ts` (20 tests total this batch).
 - Heartbeat: records `heartbeat_last_tick` / `heartbeat_last_error` in soul for doctor visibility.
-- Permission audit log: `~/.elitza/permission-decisions.jsonl` append-only log of every evaluated decision (source: ruleset/capability).
+- Permission audit log: `~/.ai-enablement-agent/permission-decisions.jsonl` append-only log of every evaluated decision (source: ruleset/capability).
 
 ### Modified
 - `index.ts` — permission.evaluate hook for capability enforcement + decision logging; imports.
@@ -80,7 +80,7 @@ Entries are appended chronologically. Newest first.
 ## 2026-10-31 — Feature batch: verticals, templates, triggers, CRM v2, signed handovers
 
 ### Added
-- `packages/plugins/elitza-brain/src/identity.ts` — Ed25519 keypair under `~/.elitza/identity.pem` + `identity.pub`; sign/verify/sha256.
+- `packages/plugins/elitza-brain/src/identity.ts` — Ed25519 keypair under `~/.ai-enablement-agent/identity.pem` + `identity.pub`; sign/verify/sha256.
 - `packages/plugins/elitza-brain/src/verticals.ts` + `vertical` tool — industry packs (farming, trades), seed/list/show/use, active vertical injected into system prompt.
 - `packages/plugins/elitza-brain/src/templates.ts` + `template` tool — automation template registry (lead-capture-webhook, review-request-sequence, invoice-reminder), instantiate per client with placeholder substitution, CRM asset registration.
 - `email_triggers` table in crm.db + `trigger` tool + heartbeat pass — event-driven touches (stage_is, days_in_stage, days_after_handover), drafts for approval, cooldowns.
@@ -91,7 +91,7 @@ Entries are appended chronologically. Newest first.
 - `handover.ts` — HandoverResult gained signed/public_key/signature_path/sha256; signature block appended.
 - `tools.ts` — new tools: vertical, template, trigger, backup, capability, handover verify.
 - `heartbeat.ts` — trigger pass (gated by ELITZA_TRIGGERS).
-- `crm.ts` — email_triggers table + functions; ELITZA_HOME import.
+- `crm.ts` — email_triggers table + functions; AI_ENABLEMENT_HOME import.
 - `crmview.ts` — bulk/today endpoints.
 - `index.ts` — seed verticals/templates; inject active vertical; permission hook.
 

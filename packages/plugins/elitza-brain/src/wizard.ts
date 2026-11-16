@@ -112,7 +112,7 @@ const mimoKey: Step = async ({ dialog, toast, answers, index, total }) => {
     const typed = await dialog.prompt({
       title: titled(index, total, "Paste your MiMo API key"),
       description: [
-        "It goes straight into ~/.elitza/.env with 600 permissions — never into my memory, my persona, or anything that leaves this machine.",
+        "It goes straight into ~/.ai-enablement-agent/.env with 600 permissions — never into my memory, my persona, or anything that leaves this machine.",
         "",
         "No account yet: https://platform.xiaomimimo.com?ref=HFSR94 · invite code HFSR94",
       ].join("\n"),
@@ -143,7 +143,7 @@ const mimoKey: Step = async ({ dialog, toast, answers, index, total }) => {
     if (!saveSecretValue("mimo_key", value)) {
       await dialog.alert({
         title: "Couldn't write the key",
-        message: "Writing ~/.elitza/.env failed — the key was not stored. Fix the file permissions and run /setup again.",
+        message: "Writing ~/.ai-enablement-agent/.env failed — the key was not stored. Fix the file permissions and run /setup again.",
       })
       answers.mimo_key = "(not saved — could not write the file)"
       return "continue"

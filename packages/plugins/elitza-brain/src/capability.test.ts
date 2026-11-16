@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "elitza-cap-test-"))
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 
 const { issue, verifyToken, delegate, revoke, covers, listIssued, listRevoked, attachSession, detachSession, getSessionCapability } = await import("./capability.js")
 

@@ -5,7 +5,7 @@
  * run — what to ask before quoting, how the proposal is shaped, which
  * workbook fits, how the call goes, what payment means, what handover owes
  * the buyer. Curated here so they ship with the plugin, then seeded into
- * ~/.elitza/brain/procedural/ on load.
+ * ~/.ai-enablement-agent/brain/procedural/ on load.
  *
  * Seeding never overwrites: an operator who edits a playbook keeps their
  * edit across restarts and upgrades. Files are plain markdown with a

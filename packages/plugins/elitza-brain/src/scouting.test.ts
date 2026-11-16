@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { scoutBusinesses } from "./scouting.js"
 
-const ENV_KEYS = ["PHOTON_URL", "OSM_API_URL", "OVERPASS_URL", "GOOGLE_PLACES_URL", "GOOGLE_MAPS_API_KEY"] as const
+const ENV_KEYS = ["PHOTON_URL", "OSM_API_URL", "OVERPASS_URL", "GOOGLE_PLACES_URL", "GOOGLE_MAPS_API_KEY", "MIODOTTORE_URL"] as const
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]))
 const servers: { stop: (force?: boolean) => void }[] = []
 
@@ -47,6 +47,10 @@ function overpassStub(elements: unknown[]) {
 
 function placesStub(places: unknown[]) {
   return serve(async () => Response.json({ places }))
+}
+
+function miodottoreStub(html = "") {
+  return serve(async () => new Response(html, { headers: { "content-type": "text/html" } }))
 }
 
 const dentistTags = {
@@ -88,6 +92,7 @@ const dentistPlace = {
 
 describe("scoutBusinesses", () => {
   test("scouts keyless off Photon and reads OSM tags", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([dentistFeature])
     process.env.OSM_API_URL = osmApiStub(dentistTags)
     process.env.OVERPASS_URL = overpassStub([])
@@ -106,6 +111,7 @@ describe("scoutBusinesses", () => {
 
   test("widens to the province when the city scope is empty", async () => {
     const provinceFeature = { ...dentistFeature, properties: { ...dentistFeature.properties, city: "Persico Dosimo", county: "Cremona" } }
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([provinceFeature])
     process.env.OSM_API_URL = osmApiStub(dentistTags)
     process.env.OVERPASS_URL = overpassStub([])
@@ -117,6 +123,7 @@ describe("scoutBusinesses", () => {
   })
 
   test("falls through to Overpass when Photon comes back short", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([])
     process.env.OVERPASS_URL = overpassStub([{
       type: "node",
@@ -134,6 +141,7 @@ describe("scoutBusinesses", () => {
   })
 
   test("falls through to Google Places when Photon and Overpass are short", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([])
     process.env.OVERPASS_URL = overpassStub([])
     process.env.GOOGLE_MAPS_API_KEY = "test-key"
@@ -149,6 +157,7 @@ describe("scoutBusinesses", () => {
 
   test("stops the waterfall before Google Places once Photon fills the limit", async () => {
     const secondFeature = { ...dentistFeature, properties: { ...dentistFeature.properties, osm_id: 99999, name: "Studio Bianchi" } }
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([dentistFeature, secondFeature])
     process.env.OSM_API_URL = osmApiStub((id) =>
       id === 99999
@@ -166,6 +175,7 @@ describe("scoutBusinesses", () => {
   })
 
   test("merges duplicates across sources on phone and fills the gaps", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([dentistFeature])
     process.env.OSM_API_URL = osmApiStub(dentistTags)
     process.env.OVERPASS_URL = overpassStub([])
@@ -189,6 +199,7 @@ describe("scoutBusinesses", () => {
   })
 
   test("returns no error when the sources simply have nothing", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([])
     process.env.OVERPASS_URL = overpassStub([])
 

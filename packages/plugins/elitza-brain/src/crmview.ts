@@ -10,20 +10,21 @@
  * the engine (elitza serve) starts and goes down when it stops.
  */
 
-import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail } from "./crm.js"
+import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail, logInteraction } from "./crm.js"
+import { scoutBusinesses } from "./scouting.js"
+import { enrichClient } from "./enrichment.js"
+import { addToPipeline, writeDraft } from "./outreach.js"
 import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
-import { scoutBusinesses } from "./scouting.js"
-import { enrichClient } from "./enrichment.js"
 import { listWorksheets, recommendWorksheets, pullWorksheet } from "./worksheets.js"
 
-// Load ~/.elitza/.env (mode 600) into process.env, like the elitza launcher does.
+// Load ~/.ai-enablement-agent/.env (mode 600) into process.env, like the elitza launcher does.
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 try {
-  const envPath = join(homedir(), ".elitza", ".env")
+  const envPath = join(homedir(), ".ai-enablement-agent", ".env")
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith("#")) continue
@@ -76,7 +77,7 @@ function guardrailReply(text: string): string | null {
     "reveal", "show me your", "share your",
   ]
   if (sensitive.some((k) => t.includes(k))) {
-    return "I can't share that. I'm Elitza, an AI Enablement operator — I handle scouting, CRM, outreach, enrichment, and delivery. How can I help with your clients?"
+    return "I can't share that. I'm your AI Enablement Agent — I handle scouting, CRM, outreach, enrichment, and delivery. How can I help with your clients?"
   }
   const cap = [
     "what can you do", "what do you do", "your capabilities", "your tools", "what tools",
@@ -84,7 +85,7 @@ function guardrailReply(text: string): string | null {
     "what functions", "what commands", "help me", "how do you work", "what do you know",
   ]
   if (cap.some((k) => t.includes(k))) {
-    return "I'm Elitza, an AI Enablement operator. I help you scout local clients, qualify them in a CRM, enrich leads, run outreach cadence, and deliver implementation sprints. I don't share my internal tooling or implementation details. What would you like to do with your clients?"
+    return "I'm your AI Enablement Agent. I help you scout local clients, qualify them in a CRM, enrich leads, run outreach cadence, and deliver implementation sprints. I don't share my internal tooling or implementation details. What would you like to do with your clients?"
   }
   return null
 }
@@ -115,7 +116,7 @@ async function runEnginePrompt(prompt: string, timeoutMs = 120000): Promise<stri
     const { directChat } = await import("./crmview.js").catch(() => ({} as any))
     // directChat not exported; do a minimal direct call via soul/env instead
   }
-  if (!url) throw new Error("No live Elitza engine. Start 'elitza serve' first.")
+  if (!url) throw new Error("No live agent engine. Start 'elitza serve' first.")
   const auth = "Basic " + Buffer.from(":" + password).toString("base64")
   const headers: any = { "Content-Type": "application/json", "Authorization": auth }
   const createRes = await fetch(url + "/session", { method: "POST", headers, body: JSON.stringify({ title: "Strategy generation" }) })
@@ -146,7 +147,7 @@ async function runEnginePrompt(prompt: string, timeoutMs = 120000): Promise<stri
 
 function buildStrategyPrompt(product: any): string {
   const priceLine = product.price != null ? `${product.currency || "USD"} ${product.price}` : "Free"
-  return `You are Elitza's strategy engine. Generate a COMPLETE, deterministic go-to-market and execution strategy for the following product. Apply your agent skills (copywriting, pricing, cold-email, ads, content-strategy, sales-enablement, offers, positioning) where relevant.
+  return `You are the AI Enablement Agent's strategy engine. Generate a COMPLETE, deterministic go-to-market and execution strategy for the following product. Apply your agent skills (copywriting, pricing, cold-email, ads, content-strategy, sales-enablement, offers, positioning) where relevant.
 
 PRODUCT DATA:
 - Name: ${product.name}
@@ -279,12 +280,12 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   let model = "mimo-v2.6-flash"
   let variant = ""
   let soul = ""
-  let home = process.env.ELITZA_HOME || (process.env.HOME || "") + "/.elitza"
+  let home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (process.env.HOME || "") + "/.ai-enablement-agent"
   try {
     const fs = await import("node:fs")
     const path = await import("node:path")
     const os = await import("node:os")
-    home = process.env.ELITZA_HOME || (process.env.HOME || os.homedir()) + "/.elitza"
+    home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (process.env.HOME || os.homedir()) + "/.ai-enablement-agent"
     const envPath = path.join(home, ".env")
     for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
       const t = line.trim()
@@ -318,7 +319,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
     if (!apiKey) {
       try {
         const Database = (await import("bun:sqlite")).default
-        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
         const db = new Database(dbPath, { readonly: true })
         const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
         if (row?.value) {
@@ -373,7 +374,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       // Read org ID from the opencode console credential.
       try {
         const Database = (await import("bun:sqlite")).default
-        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
         const db = new Database(dbPath, { readonly: true })
         const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
         if (row?.value) {
@@ -415,9 +416,9 @@ async function refreshGmailToken(account: any): Promise<string | null> {
   const fs = await import("node:fs")
   const pathMod = await import("node:path")
   const os = await import("node:os")
-  const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+  const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
   let env: Record<string, string> = {}
-  try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+  try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
   const clientId = env["GOOGLE_CLIENT_ID"]
   const clientSecret = env["GOOGLE_CLIENT_SECRET"]
   if (!clientId || !clientSecret) return null
@@ -438,6 +439,60 @@ async function refreshGmailToken(account: any): Promise<string | null> {
 
 // In-memory enrichment progress store (per client).
 const enrichJobs = new Map<number, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+// In-memory Scout X job store.
+const scoutXJobs = new Map<string, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+
+function productSubject(product: string, name: string, location: string, price: string): string {
+  const map: Record<string, string> = {
+    "intake-diagnostic": price + " — client intake diagnostic for " + (name || "your business"),
+    "lead-list": price + " — " + (location ? location.split(",")[0] : "local") + " " + "lead list (50 verified contacts)",
+    "prompt-pack": price + " — AI prompt pack for " + (name || "your team"),
+    "email-seq": price + " — cold email sequence for " + (name || "your business"),
+    "copy-pack": price + " — website copy rewrite",
+    "audit": price + " — AI workflow audit",
+  }
+  return map[product] || (price + " — " + product)
+}
+
+function productBody(product: string, client: any, location: string, price: string, paymentLink: string): string {
+  const name = client?.name || "there"
+  const place = location ? location.split(",")[0].trim() : "your area"
+  const link = paymentLink ? "\\nPay here: " + paymentLink + "\\n" : "\\n(Reply 'yes' and I'll send a payment link.)\\n"
+  const templates: Record<string, string> = {
+    "intake-diagnostic": "Hi " + name + ",\\n\\nI took a quick look at how " + (client?.vertical || "your business") + " handles client intake and communication. Most small businesses lose 20-40% of inbound leads because intake is manual, slow, or inconsistent (forms, emails, phone calls all in different places, no follow-up).\\n\\nI can deliver a 1-page intake diagnostic for " + (client?.vertical || "your business") + ": what's breaking, where leads drop, and a concrete 3-step fix — no calls needed, delivered as a doc you can read in 5 minutes.\\n\\nPrice: " + price + ".\\n" + link + "\\nIf it's not useful, reply 'no' and you'll never hear from me again.\\n\\n— AI Enablement Agent",
+    "lead-list": "Hi " + name + ",\\n\\nI put together a list of 50 " + (client?.vertical || "local") + " businesses in " + place + " with verified emails and phone numbers — ready to paste into your outbound tool.\\n\\nIf you're doing cold outreach, this saves a few hours of manual research. The full list (CSV) is " + price + ".\\n" + link + "\\nDelivered instantly by email. Reply 'no' and you'll never hear from me again.\\n\\n— AI Enablement Agent",
+    "prompt-pack": "Hi " + name + ",\\n\\nI have a ready-to-use AI prompt pack tailored for " + (client?.vertical || "your industry") + " — 50+ prompts for emails, proposals, research, and client comms.\\n\\nPrice: " + price + ".\\n" + link + "\\nDelivered instantly. Reply 'no' to opt out.\\n\\n— AI Enablement Agent",
+    "email-seq": "Hi " + name + ",\\n\\nI can write you a complete 4-email outbound sequence (first touch + 3 follow-ups) with subject lines and personalization hooks, tailored to " + (client?.vertical || "your niche") + ".\\n\\nPrice: " + price + ".\\n" + link + "\\nDelivered as a doc within 24h. Reply 'no' to opt out.\\n\\n— AI Enablement Agent",
+    "copy-pack": "Hi " + name + ",\\n\\nI'll rewrite your homepage + 3 key pages with conversion-focused copy, tailored to " + (client?.vertical || "your business") + ".\\n\\nPrice: " + price + ".\\n" + link + "\\nDelivered as a doc. Reply 'no' to opt out.\\n\\n— AI Enablement Agent",
+    "audit": "Hi " + name + ",\\n\\nI'll audit your workflows and deliver a prioritized automation roadmap (what to automate, in what order, with expected ROI) — no calls needed, delivered as a doc + async Loom.\\n\\nPrice: " + price + ".\\n" + link + "\\nReply 'no' to opt out.\\n\\n— AI Enablement Agent",
+  }
+  return templates[product] || ("Hi " + name + ",\\n\\nI have a " + product + " available for " + price + ".\\n" + link + "\\nReply 'no' to opt out.\\n\\n— AI Enablement Agent")
+}
+
+function buildProductReport(product: string, client: any): string {
+  const name = client?.name || "your business"
+  const diag = client?.notes || "No diagnosis available yet. Run enrichment first."
+  const risk = client?.risk_level ? client.risk_level + (client.risk_score ? " (" + client.risk_score + "/100)" : "") : "unknown"
+  const tech = client?.tech_stack || "unknown"
+  const revenue = client?.revenue_estimate || "unknown"
+  const employees = client?.employee_count || "unknown"
+  const next = client?.next_action || "Review and decide next step."
+  const title = product === "intake-diagnostic" ? "Client Intake Diagnostic" : product.replace(/-/g, " ").replace(/\\b\\w/g, (c) => c.toUpperCase())
+  return "<!doctype html><html><head><meta charset='utf-8'><title>" + title + "</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#1a1a1a;line-height:1.6}h1{font-size:22px;margin-bottom:4px}h2{font-size:15px;margin-top:24px;border-bottom:1px solid #eee;padding-bottom:4px}p{margin:8px 0}.field{margin:6px 0}.label{font-weight:600;color:#555;font-size:12px;text-transform:uppercase;letter-spacing:.5px}.value{font-size:14px}.pre{white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:8px;font-size:13px;border:1px solid #eee}</style></head><body>"
+    + "<h1>" + title + "</h1>"
+    + "<p style='color:#666;font-size:13px'>Prepared for " + name + " · " + new Date().toISOString().slice(0,10) + "</p>"
+    + "<h2>Diagnosis</h2><div class='pre'>" + diag.replace(/</g, "&lt;") + "</div>"
+    + "<h2>Risk assessment</h2><div class='field'><span class='label'>Risk level</span><div class='value'>" + risk + "</div></div>"
+    + (client?.risk_notes ? "<div class='field'><span class='label'>Notes</span><div class='value'>" + client.risk_notes + "</div></div>" : "")
+    + "<h2>Firmographics</h2>"
+    + "<div class='field'><span class='label'>Tech stack</span><div class='value'>" + tech + "</div></div>"
+    + "<div class='field'><span class='label'>Revenue estimate</span><div class='value'>" + revenue + "</div></div>"
+    + "<div class='field'><span class='label'>Employee count</span><div class='value'>" + employees + "</div></div>"
+    + "<h2>Recommended next action</h2><p>" + next + "</p>"
+    + "<hr style='margin-top:32px;border:none;border-top:1px solid #eee'>"
+    + "<p style='font-size:11px;color:#999'>Generated by AI Enablement Agent · " + name + " · Reply to this email with questions.</p>"
+    + "</body></html>"
+}
 
 export function startCrmView(ctx?: any): { stop: () => void; port: number } | null {
   const PORT = Number(process.env.CRM_VIEW_PORT ?? 8800)
@@ -494,7 +549,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           soulSet("onboarding_completed", state.completed ?? nowISO())
           try {
             memoryCreate(
-              `Setup with ${answers.human ?? "my person"}: my name is ${answers.name ?? "Elitza"}, I am ${answers.role ?? "a companion"}, I talk ${answers.voice ?? "directly"}, my initiative is ${answers.initiative ?? "balanced"}. Hard rules: ${answers.never ?? "none"}. I ask first about: ${answers.ask_first ?? "nothing"}.`,
+              `Setup with ${answers.human ?? "my person"}: my name is ${answers.name ?? "AI Enablement Agent"}, I am ${answers.role ?? "a companion"}, I talk ${answers.voice ?? "directly"}, my initiative is ${answers.initiative ?? "balanced"}. Hard rules: ${answers.never ?? "none"}. I ask first about: ${answers.ask_first ?? "nothing"}.`,
               { memoryType: "semantic", importance: 0.9, tags: ["setup", "identity"] },
             )
           } catch {}
@@ -531,7 +586,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             heartbeat_last_error: heartbeatError,
             cost_7d: costSummary(7),
             crm_port: Number(process.env.CRM_VIEW_PORT ?? 8800),
-            elitza_home: process.env.ELITZA_HOME || (process.env.HOME + "/.elitza"),
+            elitza_home: (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (process.env.HOME + "/.ai-enablement-agent"),
           })
         }
         if (path === "/api/settings/vertical" && req.method === "POST") {
@@ -594,7 +649,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           let models: string[] = []
           try {
             const Database = (await import("bun:sqlite")).default
-            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
             const db = new Database(dbPath, { readonly: true })
             const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
             db.close()
@@ -621,7 +676,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           try {
             const fs = await import("node:fs")
             const pathm = await import("node:path")
-            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
             if (!fs.existsSync(dbPath)) return json({ connected: false })
             const Database = (await import("bun:sqlite")).default
             const db = new Database(dbPath, { readonly: true })
@@ -681,7 +736,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             // Store in the credential table (upsert: remove old opencode creds first).
             const fs = await import("node:fs")
             const pathm = await import("node:path")
-            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.elitza/home/data/elitza.db")
+            const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
             fs.mkdirSync(pathm.dirname(dbPath), { recursive: true })
             const Database = (await import("bun:sqlite")).default
             const db = new Database(dbPath)
@@ -695,9 +750,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             return json({ ok: true, email: user.email, org: org?.name ?? null })
           } catch (e) { return json({ error: String(e) }, 500) }
         }
-        // --- Skills management (Elitza skills = ~/.elitza/skills/<name>/SKILL.md) ---
-        const skillsRoot = (process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")) + "/skills"
-        const skillsManifestPath = (process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")) + "/skills-manifest.json"
+        // --- Skills management (Elitza skills = ~/.ai-enablement-agent/skills/<name>/SKILL.md) ---
+        const skillsRoot = ((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || ((process.env.HOME || "") + "/.ai-enablement-agent")) + "/skills"
+        const skillsManifestPath = ((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || ((process.env.HOME || "") + "/.ai-enablement-agent")) + "/skills-manifest.json"
         function loadSkillsManifest(): Record<string, { enabled: boolean }> {
           try {
             const fs = require("node:fs")
@@ -935,7 +990,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           let set = false
           try {
             const txt = fs.readFileSync(p, "utf8")
-            for (const line of txt.split("\\n")) {
+            for (const line of txt.split("\n")) {
               const t = line.trim()
               if (t.startsWith("MATON_API_KEY=") && t.slice("MATON_API_KEY=".length).trim()) { set = true; break }
             }
@@ -963,16 +1018,16 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const name = String(body.name ?? "").trim()
           const value = String(body.value ?? "").trim()
           if (!name || !value) return json({ error: "name and value required" }, 400)
-          const allowed = new Set(["XIAOMI_API_KEY", "GOOGLE_MAPS_API_KEY", "RESEND_API_KEY", "RESEND_FROM"])
+          const allowed = new Set(["XIAOMI_API_KEY", "GOOGLE_MAPS_API_KEY", "RESEND_API_KEY", "RESEND_FROM", "RESEND_FROM_SALES", "RESEND_FROM_SUPPORT", "RESEND_FROM_HELLO", "RESEND_FROM_OUTREACH"])
           if (!allowed.has(name)) return json({ error: "unknown secret" }, 400)
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const envPath = pathMod.join(home, ".env")
           // read existing
           let lines: string[] = []
-          try { lines = fs.readFileSync(envPath, "utf8").split("\\n") } catch {}
+          try { lines = fs.readFileSync(envPath, "utf8").split("\n") } catch {}
           const filtered = lines.filter((l) => !l.trim().startsWith(name + "="))
           filtered.push(name + "=" + value)
           fs.mkdirSync(pathMod.dirname(envPath), { recursive: true })
@@ -986,11 +1041,11 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const envPath = pathMod.join(home, ".env")
           let env: Record<string, string> = {}
           try {
-            for (const line of fs.readFileSync(envPath, "utf8").split("\\n")) {
+            for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
               const t = line.trim()
               if (!t || t.startsWith("#")) continue
               const eq = t.indexOf("=")
@@ -1002,7 +1057,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           let matonSet = false
           try {
             const p = pathMod.join(os.homedir(), ".config", "maton", "credentials.env")
-            for (const line of fs.readFileSync(p, "utf8").split("\\n")) {
+            for (const line of fs.readFileSync(p, "utf8").split("\n")) {
               const t = line.trim()
               if (t.startsWith("MATON_API_KEY=") && t.slice("MATON_API_KEY=".length).trim()) { matonSet = true }
             }
@@ -1012,6 +1067,10 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             google_maps: !!env["GOOGLE_MAPS_API_KEY"],
             resend: !!env["RESEND_API_KEY"],
             resend_from: !!env["RESEND_FROM"],
+            resend_from_sales: !!env["RESEND_FROM_SALES"],
+            resend_from_support: !!env["RESEND_FROM_SUPPORT"],
+            resend_from_hello: !!env["RESEND_FROM_HELLO"],
+            resend_from_outreach: !!env["RESEND_FROM_OUTREACH"],
             maton: matonSet,
           })
         }
@@ -1045,7 +1104,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const filePath = pathMod.join(home, "pipeline-stages.json")
           let stages: any[]
           try {
@@ -1078,7 +1137,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const filePath = pathMod.join(home, "pipeline-stages.json")
           fs.writeFileSync(filePath, JSON.stringify(stages, null, 2), { mode: 0o600 })
           // Migrate orphaned clients to the first stage.
@@ -1374,6 +1433,197 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const { reachoutRecommendedCap } = await import("./crm.js")
           return json(reachoutRecommendedCap(stage))
         }
+        // Marketing: Referrals (client-to-client and attorney-to-attorney split-fee)
+        if (path === "/api/mkt/referrals" && req.method === "GET") {
+          const { listReferrals } = await import("./crm.js")
+          const type = url.searchParams.get("type") ?? undefined
+          const status = url.searchParams.get("status") ?? undefined
+          return json({ referrals: listReferrals(type, status) })
+        }
+        if (path === "/api/mkt/referrals" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addReferral } = await import("./crm.js")
+          try { return json({ referral: addReferral(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const mktReferralMatch = path.match(/^\/api\/mkt\/referrals\/(\d+)$/)
+        if (mktReferralMatch && req.method === "GET") {
+          const { getReferral } = await import("./crm.js")
+          const r = getReferral(Number(mktReferralMatch[1]))
+          if (!r) return json({ error: "not found" }, 404)
+          return json({ referral: r })
+        }
+        if (mktReferralMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateReferral } = await import("./crm.js")
+          const r = updateReferral(Number(mktReferralMatch[1]), body)
+          if (!r) return json({ error: "not found" }, 404)
+          return json({ referral: r })
+        }
+        if (mktReferralMatch && req.method === "DELETE") {
+          const { deleteReferral } = await import("./crm.js")
+          return json({ ok: deleteReferral(Number(mktReferralMatch[1])) })
+        }
+
+        // ===== Referral Program =====
+        if (path === "/api/referral/dashboard" && req.method === "GET") {
+          const { referralDashboard } = await import("./crm.js")
+          return json(referralDashboard())
+        }
+        if (path === "/api/referral/referrers" && req.method === "GET") {
+          const { listReferrers } = await import("./crm.js")
+          const tier = url.searchParams.get("tier") ?? undefined
+          return json({ referrers: listReferrers(tier) })
+        }
+        if (path === "/api/referral/referrers" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addReferrer } = await import("./crm.js")
+          try { return json({ referrer: addReferrer(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const referrerMatch = path.match(/^\/api\/referral\/referrers\/(\d+)$/)
+        if (referrerMatch && req.method === "GET") {
+          const { getReferrer } = await import("./crm.js")
+          const r = getReferrer(Number(referrerMatch[1]))
+          if (!r) return json({ error: "not found" }, 404)
+          return json({ referrer: r })
+        }
+        if (referrerMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateReferrer, getReferrer, recomputeReferrerTier } = await import("./crm.js")
+          const r = updateReferrer(Number(referrerMatch[1]), body)
+          if (!r) return json({ error: "not found" }, 404)
+          recomputeReferrerTier(Number(referrerMatch[1]))
+          return json({ referrer: getReferrer(Number(referrerMatch[1])) })
+        }
+        if (referrerMatch && req.method === "DELETE") {
+          const { deleteReferrer } = await import("./crm.js")
+          return json({ ok: deleteReferrer(Number(referrerMatch[1])) })
+        }
+        if (path === "/api/referral/events" && req.method === "GET") {
+          const { listReferralEvents } = await import("./crm.js")
+          const rid = url.searchParams.get("referrer_id")
+          return json({ events: listReferralEvents(rid ? Number(rid) : undefined) })
+        }
+        if (path === "/api/referral/events" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addReferralEvent } = await import("./crm.js")
+          try { return json({ event: addReferralEvent(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const eventMatch = path.match(/^\/api\/referral\/events\/(\d+)$/)
+        if (eventMatch && req.method === "DELETE") {
+          const { deleteReferralEvent } = await import("./crm.js")
+          return json({ ok: deleteReferralEvent(Number(eventMatch[1])) })
+        }
+        if (path === "/api/referral/leaderboard" && req.method === "GET") {
+          const { referralLeaderboard } = await import("./crm.js")
+          const limit = Number(url.searchParams.get("limit") ?? 10)
+          return json({ leaderboard: referralLeaderboard(limit) })
+        }
+        if (path === "/api/referral/birthdays" && req.method === "GET") {
+          const { upcomingReferrerBirthdays } = await import("./crm.js")
+          const days = Number(url.searchParams.get("days") ?? 30)
+          return json({ birthdays: upcomingReferrerBirthdays(days) })
+        }
+        if (path === "/api/referral/thank-yous" && req.method === "GET") {
+          const { listThankYous } = await import("./crm.js")
+          const rid = url.searchParams.get("referrer_id")
+          return json({ thank_yous: listThankYous(rid ? Number(rid) : undefined) })
+        }
+        if (path === "/api/referral/thank-yous" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addThankYou } = await import("./crm.js")
+          try { return json({ thank_you: addThankYou(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const tyMatch = path.match(/^\/api\/referral\/thank-yous\/(\d+)$/)
+        if (tyMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updateThankYou } = await import("./crm.js")
+          const r = updateThankYou(Number(tyMatch[1]), body)
+          if (!r) return json({ error: "not found" }, 404)
+          return json({ thank_you: r })
+        }
+        if (tyMatch && req.method === "DELETE") {
+          const { deleteThankYou } = await import("./crm.js")
+          return json({ ok: deleteThankYou(Number(tyMatch[1])) })
+        }
+        if (path === "/api/referral/seed-example" && req.method === "POST") {
+          const { seedReferralExample } = await import("./crm.js")
+          return json(seedReferralExample())
+        }
+        if (path === "/api/referral/tier-recompute" && req.method === "POST") {
+          const body = await readBody(req)
+          const { recomputeReferrerTier } = await import("./crm.js")
+          const r = recomputeReferrerTier(Number(body.referrer_id))
+          return json({ referrer: r })
+        }
+        const referredLeadsMatch = path.match(/^\/api\/referral\/referrers\/(\d+)\/leads$/)
+        if (referredLeadsMatch && req.method === "GET") {
+          const { getReferredLeads } = await import("./crm.js")
+          return json({ leads: getReferredLeads(Number(referredLeadsMatch[1])) })
+        }
+        if (path === "/api/referral/sync" && req.method === "POST") {
+          const { syncReferrersFromReferrals } = await import("./crm.js")
+          return json(syncReferrersFromReferrals())
+        }
+
+        // ===== People master =====
+        if (path === "/api/people/search" && req.method === "GET") {
+          const { listPeople } = await import("./crm.js")
+          const q = (url.searchParams.get("q") || "").toLowerCase()
+          const limit = Number(url.searchParams.get("limit") ?? 20)
+          const all = listPeople()
+          const filtered = q ? all.filter((p: any) => (p.name || "").toLowerCase().includes(q) || (p.email || "").toLowerCase().includes(q)) : all
+          return json({ people: filtered.slice(0, limit) })
+        }
+        if (path === "/api/people" && req.method === "GET") {
+          const { listPeople } = await import("./crm.js")
+          const role = url.searchParams.get("role") ?? undefined
+          return json({ people: listPeople(role) })
+        }
+        if (path === "/api/people" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addPerson } = await import("./crm.js")
+          try { return json({ person: addPerson(body) }) }
+          catch (e) { return json({ error: String(e) }, 400) }
+        }
+        const personMatch = path.match(/^\/api\/people\/(\d+)$/)
+        if (personMatch && req.method === "GET") {
+          const { getPerson } = await import("./crm.js")
+          const p = getPerson(Number(personMatch[1]))
+          if (!p) return json({ error: "not found" }, 404)
+          return json({ person: p })
+        }
+        if (personMatch && req.method === "PUT") {
+          const body = await readBody(req)
+          const { updatePerson } = await import("./crm.js")
+          const p = updatePerson(Number(personMatch[1]), body)
+          if (!p) return json({ error: "not found" }, 404)
+          return json({ person: p })
+        }
+        if (path === "/api/referral/promote-client" && req.method === "POST") {
+          const body = await readBody(req)
+          const { promoteClientToReferrer } = await import("./crm.js")
+          const r = promoteClientToReferrer(Number(body.client_id))
+          if (!r) return json({ error: "not found" }, 404)
+          return json({ referrer: r })
+        }
+        if (path === "/api/referral/promote-person" && req.method === "POST") {
+          const body = await readBody(req)
+          const { addPerson, getPerson, addReferrer, addRoleToPerson } = await import("./crm.js")
+          let pid = body.person_id ? Number(body.person_id) : null
+          if (!pid) {
+            const p = addPerson({ name: body.name, email: body.email, phone: body.phone, birthday: body.birthday, roles: ["referrer"] })
+            pid = p.id
+          } else {
+            addRoleToPerson(pid, "referrer")
+          }
+          const person = getPerson(pid!)
+          const r = addReferrer({ name: person!.name, email: person!.email, phone: person!.phone, birthday: person!.birthday, notes: person!.notes, person_id: pid, tier: "bronze", points: 0 })
+          return json({ referrer: r })
+        }
         const stratMatch = path.match(/^\/api\/products\/(\d+)\/strategy$/)
         if (stratMatch && req.method === "POST") {
           const id = Number(stratMatch[1])
@@ -1526,6 +1776,10 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
         }
         if (path === "/api/scout/runs" && req.method === "GET") {
           return json({ runs: listScoutRuns() })
+        }
+        if (path === "/api/clients/by-source" && req.method === "GET") {
+          const rows = crmDb().query("SELECT source, COUNT(*) AS n FROM clients GROUP BY source ORDER BY n DESC").all() as any[]
+          return json({ by_source: rows.map((r) => ({ source: r.source, count: Number(r.n) })) })
         }
         const scoutRunMatch = path.match(/^\/api\/scout\/runs\/(\d+)$/)
         if (scoutRunMatch && req.method === "GET") {
@@ -1734,7 +1988,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const filePath = String(body.path ?? "")
           // Only read files under the Elitza home or /tmp (safety).
           const home = process.env.HOME ?? ""
-          const allowed = [`${home}/.elitza`, "/tmp", `${home}/.openclaw`]
+          const allowed = [`${home}/.ai-enablement-agent`, "/tmp", `${home}/.openclaw`]
           if (!allowed.some((root) => filePath.startsWith(root))) {
             return json({ error: "path not allowed" }, 403)
           }
@@ -2270,10 +2524,10 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const envPath = pathMod.join(home, ".env")
           let env: Record<string, string> = {}
-          try { for (const line of fs.readFileSync(envPath, "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          try { for (const line of fs.readFileSync(envPath, "utf8").split("\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
           return json({ client_id: env["GOOGLE_CLIENT_ID"] || "", client_secret_set: !!env["GOOGLE_CLIENT_SECRET"], redirect_uri: "http://127.0.0.1:" + (process.env.CRM_VIEW_PORT ?? 8800) + "/oauth/google/callback" })
         }
         if (path === "/api/mail/gmail/oauth-config" && req.method === "POST") {
@@ -2284,10 +2538,10 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           const envPath = pathMod.join(home, ".env")
           let lines: string[] = []
-          try { lines = fs.readFileSync(envPath, "utf8").split("\\n") } catch {}
+          try { lines = fs.readFileSync(envPath, "utf8").split("\n") } catch {}
           const filtered = lines.filter((l) => !l.trim().startsWith("GOOGLE_CLIENT_ID=") && !l.trim().startsWith("GOOGLE_CLIENT_SECRET="))
           filtered.push("GOOGLE_CLIENT_ID=" + cid)
           if (csecret) filtered.push("GOOGLE_CLIENT_SECRET=" + csecret)
@@ -2300,9 +2554,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           let env: Record<string, string> = {}
-          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
           const clientId = env["GOOGLE_CLIENT_ID"]
           if (!clientId) return json({ error: "Google OAuth client_id not configured" }, 400)
           const port = process.env.CRM_VIEW_PORT ?? 8800
@@ -2320,14 +2574,14 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
           const os = await import("node:os")
-          const home = process.env.ELITZA_HOME || (os.homedir() + "/.elitza")
+          const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (os.homedir() + "/.ai-enablement-agent")
           // verify state
           let savedState = ""
           try { savedState = fs.readFileSync(pathMod.join(home, ".oauth_state"), "utf8").trim() } catch {}
           if (!code) return new Response("Missing code", { status: 400 })
           // read client creds
           let env: Record<string, string> = {}
-          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
+          try { for (const line of fs.readFileSync(pathMod.join(home, ".env"), "utf8").split("\n")) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim() } } catch {}
           const clientId = env["GOOGLE_CLIENT_ID"]
           const clientSecret = env["GOOGLE_CLIENT_SECRET"]
           if (!clientId || !clientSecret) return new Response("OAuth client not configured", { status: 400 })
@@ -2357,6 +2611,144 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           // store refresh token in a sidecar file keyed by account id (cloud_accounts already stores refresh_token)
           try { fs.unlinkSync(pathMod.join(home, ".oauth_state")) } catch {}
           return Response.redirect("http://127.0.0.1:" + port + "/?gmail=connected", 302)
+        }
+
+        // ---- Scout X: product-specific scouting + auto-draft ----
+        if (path === "/api/scout-x" && req.method === "POST") {
+          const body = await readBody(req)
+          const location = String(body.location || "").trim()
+          const query = String(body.query || "").trim()
+          const limit = Math.max(1, Math.min(20, Number(body.limit ?? 5)))
+          const product = String(body.product || "lead-list")
+          const price = String(body.price || "$20")
+          const paymentLink = String(body.payment_link || "").trim()
+          if (!location || !query) return json({ error: "location and query required" }, 400)
+          const jobId = "sx_" + Date.now()
+          const job: { lines: string[]; running: boolean; done: boolean; error?: string; result?: any } = { lines: [], running: true, done: false, result: null }
+          scoutXJobs.set(jobId, job)
+          const log = (l: string) => job.lines.push(l)
+          ;(async () => {
+            try {
+              log("🚀 Scout X started — product: " + product + " (" + price + ")")
+              log("📍 Location: " + location + " · Query: " + query + " · Limit: " + limit)
+              const scoutRes = await scoutBusinesses(location, query, limit)
+              if (scoutRes.steps) for (const s of scoutRes.steps) log(s)
+              const businesses = scoutRes.businesses || []
+              log("✅ Scouted " + businesses.length + " businesses.")
+              const drafted: number[] = []
+              const skipped: string[] = []
+              for (let i = 0; i < businesses.length; i++) {
+                const b = businesses[i]
+                log("")
+                log("── Lead " + (i + 1) + "/" + businesses.length + ": " + b.name + " ──")
+                // add to CRM
+                let clientId: number | null = null
+                try {
+                  const { client, created } = addClient({ name: b.name, vertical: query, status: "scouted", score: 50, address: b.address || undefined, phone: b.phone || undefined, website: b.website || undefined, source: "scout-x" })
+                  clientId = client.id
+                  log(created ? "➕ Added to CRM (id " + client.id + ")" : "♻️ Already in CRM (id " + client.id + ")")
+                } catch (e) { log("⚠️ Add to CRM failed: " + String(e)); skipped.push(b.name); continue }
+                // enrich
+                log("🔎 Enriching…")
+                try {
+                  const er = await enrichClient(clientId, { onProgress: (l) => log("   " + l) })
+                  if (er.ok) {
+                    log("✅ Enriched" + (er.emails?.length ? " · email: " + er.emails[0] : "") + (er.socials && Object.keys(er.socials).length ? " · socials: " + Object.keys(er.socials).join(",") : ""))
+                  } else {
+                    log("⚠️ Enrichment: " + (er.error || "no data"))
+                  }
+                } catch (e) { log("⚠️ Enrichment failed: " + String(e)) }
+                const c = getClient(clientId)
+                // draft email if we have an email
+                if (c?.email) {
+                  try {
+                    const subject = productSubject(product, c.name, location, price)
+                    const body = productBody(product, c, location, price, paymentLink)
+                    const { filePath } = writeDraft(clientId, { subject, body, variant: product })
+                    log("✉️ Drafted email → " + (filePath || "").split("/").pop())
+                    drafted.push(clientId)
+                  } catch (e) { log("⚠️ Draft failed: " + String(e)) }
+                } else {
+                  log("⏭️ No email found — skipped drafting (added to CRM only).")
+                  skipped.push(b.name)
+                }
+              }
+              log("")
+              log("🏁 Scout X complete: " + businesses.length + " scouted, " + drafted.length + " drafted, " + skipped.length + " skipped.")
+              job.result = { businesses, drafted, skipped, location, query, product, price }
+              job.done = true
+              job.running = false
+            } catch (e) {
+              job.error = String(e)
+              job.done = true
+              job.running = false
+              log("❌ Scout X failed: " + String(e))
+            }
+          })()
+          return json({ started: true, job_id: jobId })
+        }
+        const scoutXStatusMatch = path.match(/^\/api\/scout-x\/status\/(.+)$/)
+        if (scoutXStatusMatch && req.method === "GET") {
+          const job = scoutXJobs.get(decodeURIComponent(scoutXStatusMatch[1]))
+          if (!job) return json({ running: false, done: false, lines: [] })
+          return json({ running: job.running, done: job.done, error: job.error ?? null, result: job.result ?? null, lineCount: job.lines.length })
+        }
+        const scoutXLogMatch = path.match(/^\/api\/scout-x\/log\/(.+)$/)
+        if (scoutXLogMatch && req.method === "GET") {
+          const job = scoutXJobs.get(decodeURIComponent(scoutXLogMatch[1]))
+          const after = Number(url.searchParams.get("after") ?? 0)
+          const lines = job ? job.lines.slice(after) : []
+          return json({ lines, total: job ? job.lines.length : 0, running: job?.running ?? false, done: job?.done ?? false, error: job?.error ?? null })
+        }
+
+        // ---- Product delivery (on payment or manual) ----
+        if (path === "/api/products/deliver" && req.method === "POST") {
+          const body = await readBody(req)
+          const clientId = Number(body.client_id)
+          const product = String(body.product || "intake-diagnostic")
+          const client = getClient(clientId)
+          if (!client) return json({ error: "client not found" }, 404)
+          const to = String(body.email || client.email || "").trim()
+          if (!to) return json({ error: "no recipient email" }, 400)
+          // build report
+          const report = buildProductReport(product, client)
+          // send via gmail if connected, else resend
+          let sent = false
+          try {
+            const accs = crmDb().query("SELECT * FROM cloud_accounts WHERE provider = 'gmail' AND status = 'connected'").all() as any[]
+            if (accs.length) {
+              const acc = accs[0]
+              const lines = ["From: " + (acc.account_label || ""), "To: " + to, "Subject: Your " + product + " report", "MIME-Version: 1.0", "Content-Type: text/html; charset=UTF-8", "", report]
+              const raw = Buffer.from(lines.join("\r\n")).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+              const resp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { method: "POST", headers: { "Authorization": "Bearer " + acc.access_token, "Content-Type": "application/json" }, body: JSON.stringify({ raw }) })
+              if (resp.ok) sent = true
+            }
+          } catch {}
+          if (!sent) {
+            const apiKey = process.env.RESEND_API_KEY?.trim()
+            const from = process.env.RESEND_FROM?.trim()
+            if (apiKey && from) {
+              try {
+                const resp = await fetch((process.env.RESEND_URL || "https://api.resend.com/emails").replace(/\/$/, ""), { method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ from, to: [to], subject: "Your " + product + " report", html: report }) })
+                if (resp.ok) sent = true
+              } catch {}
+            }
+          }
+          if (!sent) return json({ error: "no email provider available (connect Gmail or set Resend keys)" }, 502)
+          // log interaction
+          try { logInteraction(clientId, { kind: "product_delivered", direction: "out", channel: "email", status: "delivered", subject: "Your " + product + " report", body: report.slice(0, 500), occurred_at: new Date().toISOString() }) } catch {}
+          return json({ ok: true, delivered_to: to, product })
+        }
+        if (path === "/api/products/webhook" && req.method === "POST") {
+          // Generic payment webhook: { client_id, product, email } → deliver
+          const body = await readBody(req)
+          const clientId = Number(body.client_id)
+          const product = String(body.product || "intake-diagnostic")
+          const email = body.email ? String(body.email) : undefined
+          // forward to deliver
+          const r = await fetch("http://127.0.0.1:" + (process.env.CRM_VIEW_PORT ?? 8800) + "/api/products/deliver", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: clientId, product, email }) })
+          const j = await r.json()
+          return json(j, r.status)
         }
 
         return new Response(HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } })
@@ -2464,7 +2856,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
   const autoSyncTimer = setInterval(runAutoSync, AUTO_SYNC_MS)
   // keep reference to avoid GC (store on server object not needed; interval holds)
 
-  console.log(`[crm-view] Elitza CRM house listening on http://127.0.0.1:${PORT}`)
+  console.log(`[crm-view] AI Enablement Agent CRM listening on http://127.0.0.1:${PORT}`)
   // Auto-open in the default browser on first start (best-effort, never fatal).
   if (!process.env.CRM_VIEW_NO_OPEN) {
     try {

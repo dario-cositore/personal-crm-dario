@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "elitza-vert-test-"))
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 
 const { seedVerticals, listVerticals, getVertical, setActiveVertical, getActiveVertical } = await import("./verticals.js")
 

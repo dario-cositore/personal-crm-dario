@@ -1,7 +1,7 @@
 /**
  * Elitza Brain — the AI Enablement CRM (Task C).
  *
- * Its own database (`~/.elitza/brain/crm.db`), deliberately separate from
+ * Its own database (`~/.ai-enablement-agent/brain/crm.db`), deliberately separate from
  * the soul: client rows are case data carrying names, phones and emails, so
  * they keep their own file — independently backed up, exported or wiped,
  * and never indexed into the memory FTS.
@@ -23,13 +23,13 @@
 import { Database } from "bun:sqlite"
 import fs from "node:fs"
 import path from "node:path"
-import { BRAIN_DIR, ELITZA_HOME as _ELITZA_HOME, nowISO } from "./db.js"
+import { BRAIN_DIR, AI_ENABLEMENT_HOME as _AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 
 export const CRM_DB_PATH = `${BRAIN_DIR}/crm.db`
 
 /**
  * Where the CRM opens. Resolved at open time, not at import time, because
- * `ELITZA_HOME` (and therefore CRM_DB_PATH) is frozen the moment db.js loads —
+ * `AI_ENABLEMENT_HOME` (and therefore CRM_DB_PATH) is frozen the moment db.js loads —
  * a test that sets it later would otherwise reach the operator's real records.
  * Same override shape as GOOGLE_PLACES_URL / RESEND_URL.
  */
@@ -57,6 +57,20 @@ export const CLIENT_STATUSES = [
 export type ClientStatus = string
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS people (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      birthday TEXT,
+      notes TEXT,
+      roles TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS people_email ON people(email);
+  CREATE INDEX IF NOT EXISTS people_name ON people(name);
+
   CREATE TABLE IF NOT EXISTS clients (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -93,8 +107,10 @@ const SCHEMA = `
       revenue_estimate TEXT,
       employee_count TEXT,
       language TEXT NOT NULL DEFAULT 'en',
+      person_id INTEGER,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (person_id) REFERENCES people(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS client_interactions (
@@ -348,6 +364,7 @@ const SCHEMA = `
       impressions INTEGER NOT NULL DEFAULT 0,
       clicks INTEGER NOT NULL DEFAULT 0,
       conversions INTEGER NOT NULL DEFAULT 0,
+      revenue REAL NOT NULL DEFAULT 0,
       start_date TEXT,
       end_date TEXT,
       product_id INTEGER,
@@ -411,6 +428,92 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS mkt_reachout_queue_campaign ON mkt_reachout_queue(campaign_id, scheduled_at);
   CREATE INDEX IF NOT EXISTS mkt_reachout_queue_status ON mkt_reachout_queue(status, scheduled_at);
+
+  CREATE TABLE IF NOT EXISTS referrals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL DEFAULT 'client_to_client',
+      status TEXT NOT NULL DEFAULT 'pending',
+      referrer_kind TEXT NOT NULL DEFAULT 'client',
+      referrer_client_id INTEGER,
+      referrer_person_id INTEGER,
+      referrer_name TEXT,
+      referee_kind TEXT NOT NULL DEFAULT 'client',
+      referee_client_id INTEGER,
+      referee_name TEXT,
+      total_value REAL,
+      split_percent REAL,
+      split_amount REAL,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      paid_at TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (referrer_client_id) REFERENCES clients(id) ON DELETE SET NULL,
+      FOREIGN KEY (referrer_person_id) REFERENCES people(id) ON DELETE SET NULL,
+      FOREIGN KEY (referee_client_id) REFERENCES clients(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS referrals_type ON referrals(type);
+  CREATE INDEX IF NOT EXISTS referrals_status ON referrals(status);
+  CREATE INDEX IF NOT EXISTS referrals_referrer_client ON referrals(referrer_client_id);
+  CREATE INDEX IF NOT EXISTS referrals_referee_client ON referrals(referee_client_id);
+
+  CREATE TABLE IF NOT EXISTS referrers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      person_id INTEGER,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      birthday TEXT,
+      important_dates TEXT,
+      client_id INTEGER,
+      tier TEXT NOT NULL DEFAULT 'bronze',
+      points INTEGER NOT NULL DEFAULT 0,
+      badges TEXT,
+      notes TEXT,
+      joined_at TEXT NOT NULL,
+      last_thank_you_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
+      FOREIGN KEY (person_id) REFERENCES people(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS referrers_tier ON referrers(tier);
+  CREATE INDEX IF NOT EXISTS referrers_person ON referrers(person_id);
+  CREATE INDEX IF NOT EXISTS referrers_client ON referrers(client_id);
+  CREATE INDEX IF NOT EXISTS referrers_birthday ON referrers(birthday);
+
+  CREATE TABLE IF NOT EXISTS referral_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      referrer_id INTEGER NOT NULL,
+      referral_id INTEGER,
+      client_id INTEGER,
+      event_type TEXT NOT NULL DEFAULT 'referral',
+      value REAL,
+      points INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (referrer_id) REFERENCES referrers(id) ON DELETE CASCADE,
+      FOREIGN KEY (referral_id) REFERENCES referrals(id) ON DELETE SET NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS referral_events_referrer ON referral_events(referrer_id);
+  CREATE INDEX IF NOT EXISTS referral_events_type ON referral_events(event_type);
+
+  CREATE TABLE IF NOT EXISTS referral_thank_yous (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      referrer_id INTEGER NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'email',
+      subject TEXT,
+      body TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      sent_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (referrer_id) REFERENCES referrers(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS referral_thank_yous_referrer ON referral_thank_yous(referrer_id);
+  CREATE INDEX IF NOT EXISTS referral_thank_yous_status ON referral_thank_yous(status);
 `
 /** A row shipped before this column existed must gain it, or the cadence reads null. */
 function migrate(db: Database): void {
@@ -464,6 +567,57 @@ function migrate(db: Database): void {
       db.exec("ALTER TABLE products ADD COLUMN strategy_generated_at TEXT")
     }
   } catch { /* products table may not exist yet */ }
+  // mkt_ads revenue column (auto-calculated metrics).
+  try {
+    const adCols = db.query("PRAGMA table_info(mkt_ads)").all() as { name: string }[]
+    if (adCols.length && !adCols.some((c) => c.name === "revenue")) {
+      db.exec("ALTER TABLE mkt_ads ADD COLUMN revenue REAL NOT NULL DEFAULT 0")
+    }
+  } catch { /* mkt_ads table may not exist yet */ }
+  // referrals -> referrer link
+  try {
+    const refCols = db.query("PRAGMA table_info(referrals)").all() as { name: string }[]
+    if (refCols.length && !refCols.some((c) => c.name === "referrer_id")) {
+      db.exec("ALTER TABLE referrals ADD COLUMN referrer_id INTEGER")
+    }
+    if (refCols.length && !refCols.some((c) => c.name === "referrer_person_id")) {
+      db.exec("ALTER TABLE referrals ADD COLUMN referrer_person_id INTEGER")
+    }
+  } catch { /* referrals table may not exist yet */ }
+  // people master: person_id on clients
+  try {
+    const cCols = db.query("PRAGMA table_info(clients)").all() as { name: string }[]
+    if (cCols.length && !cCols.some((c) => c.name === "person_id")) {
+      db.exec("ALTER TABLE clients ADD COLUMN person_id INTEGER")
+    }
+  } catch {}
+  // people master: person_id on referrers
+  try {
+    const rCols = db.query("PRAGMA table_info(referrers)").all() as { name: string }[]
+    if (rCols.length && !rCols.some((c) => c.name === "person_id")) {
+      db.exec("ALTER TABLE referrers ADD COLUMN person_id INTEGER")
+    }
+  } catch {}
+  // backfill people from clients without person_id
+  try {
+    const orphanClients = db.query("SELECT * FROM clients WHERE person_id IS NULL").all() as any[]
+    for (const c of orphanClients) {
+      const now = nowISO()
+      const res = db.run("INSERT INTO people (name,email,phone,birthday,notes,roles,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        [c.name, c.email ?? null, c.phone ?? null, null, c.notes ?? null, JSON.stringify(["client"]), now, now])
+      db.run("UPDATE clients SET person_id = ? WHERE id = ?", [Number(res.lastInsertRowid), c.id])
+    }
+  } catch {}
+  // backfill people from referrers without person_id
+  try {
+    const orphanRefs = db.query("SELECT * FROM referrers WHERE person_id IS NULL").all() as any[]
+    for (const r of orphanRefs) {
+      const now = nowISO()
+      const res = db.run("INSERT INTO people (name,email,phone,birthday,notes,roles,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        [r.name, r.email ?? null, r.phone ?? null, r.birthday ?? null, r.notes ?? null, JSON.stringify(["referrer"]), now, now])
+      db.run("UPDATE referrers SET person_id = ? WHERE id = ?", [Number(res.lastInsertRowid), r.id])
+    }
+  } catch {}
 }
 
 let instance: Database | undefined
@@ -1273,13 +1427,13 @@ export function listAssets(clientId: number): ClientAsset[] {
 try { migrateEnrichedLeads() } catch { /* ignore */ }
 
 // ---------------------------------------------------------------------------
-// Configured pipeline stages (from ~/.elitza/pipeline-stages.json, else defaults)
+// Configured pipeline stages (from ~/.ai-enablement-agent/pipeline-stages.json, else defaults)
 // ---------------------------------------------------------------------------
 export function configuredStageIds(): string[] {
   try {
     const fs = require("node:fs")
     const path = require("node:path")
-    const home = process.env.ELITZA_HOME || ((process.env.HOME || "") + "/.elitza")
+    const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || ((process.env.HOME || "") + "/.ai-enablement-agent")
     const file = path.join(home, "pipeline-stages.json")
     if (fs.existsSync(file)) {
       const stages = JSON.parse(fs.readFileSync(file, "utf8"))
@@ -1428,7 +1582,7 @@ export function processTriggers(): { fired: number; checked: number } {
 
     // Write a draft file for human approval.
     try {
-      const dir = path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "pipeline", nowISO().slice(0, 10))
+      const dir = path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "pipeline", nowISO().slice(0, 10))
       fs.mkdirSync(dir, { recursive: true })
       const vars: Record<string, string> = { CLIENT_NAME: client.name, CONTACT_NAME: client.name, EMAIL: client.email ?? "" }
       let subject = t.subject
@@ -1778,10 +1932,10 @@ export async function continuousBackupStream(): Promise<{ created: string; uploa
   const os = await import("node:os")
   const { execSync } = await import("node:child_process")
   const home = process.env.HOME || os.homedir()
-  const elitzaHome = process.env.ELITZA_HOME || (home + "/.elitza")
-  const out = path.join(home, "elitza-backup-" + new Date().toISOString().slice(0, 10) + ".tar.gz")
+  const elitzaHome = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (home + "/.ai-enablement-agent")
+  const out = path.join(home, "ai-enablement-backup-" + new Date().toISOString().slice(0, 10) + ".tar.gz")
   try {
-    execSync("tar -czf " + out + " -C " + home + " .elitza", { stdio: "pipe" })
+    execSync("tar -czf " + out + " -C " + home + " .ai-enablement-agent", { stdio: "pipe" })
   } catch (e) {
     return { created: "", uploaded: 0, errors: ["tar failed: " + String(e)] }
   }
@@ -1937,19 +2091,19 @@ export function deleteMktEmailCampaign(id: number): boolean {
 
 export interface MktAd {
   id: number; name: string; platform: string; status: string;
-  budget: number | null; currency: string; spend: number; impressions: number; clicks: number; conversions: number;
+  budget: number | null; currency: string; spend: number; impressions: number; clicks: number; conversions: number; revenue: number;
   start_date: string | null; end_date: string | null; product_id: number | null; notes: string | null;
   created_at: string; updated_at: string;
 }
 export interface MktAdInput {
   name: string; platform?: string; status?: string; budget?: number | null; currency?: string;
-  spend?: number; impressions?: number; clicks?: number; conversions?: number;
+  spend?: number; impressions?: number; clicks?: number; conversions?: number; revenue?: number;
   start_date?: string | null; end_date?: string | null; product_id?: number | null; notes?: string | null;
 }
 export function addMktAd(input: MktAdInput): MktAd {
   const db = crmDb(); const now = nowISO();
-  const res = db.run(`INSERT INTO mkt_ads (name,platform,status,budget,currency,spend,impressions,clicks,conversions,start_date,end_date,product_id,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [input.name, input.platform ?? 'meta', input.status ?? 'draft', input.budget ?? null, input.currency ?? 'USD', input.spend ?? 0, input.impressions ?? 0, input.clicks ?? 0, input.conversions ?? 0, input.start_date ?? null, input.end_date ?? null, input.product_id ?? null, input.notes ?? null, now, now]);
+  const res = db.run(`INSERT INTO mkt_ads (name,platform,status,budget,currency,spend,impressions,clicks,conversions,revenue,start_date,end_date,product_id,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [input.name, input.platform ?? 'meta', input.status ?? 'draft', input.budget ?? null, input.currency ?? 'USD', input.spend ?? 0, input.impressions ?? 0, input.clicks ?? 0, input.conversions ?? 0, input.revenue ?? 0, input.start_date ?? null, input.end_date ?? null, input.product_id ?? null, input.notes ?? null, now, now]);
   return getMktAd(Number(res.lastInsertRowid))!;
 }
 export function getMktAd(id: number): MktAd | null {
@@ -1968,7 +2122,7 @@ export function updateMktAd(id: number, patch: any): MktAd | null {
   const db = crmDb(); const existing = getMktAd(id); if (!existing) return null;
   const now = nowISO();
   const fields: string[] = []; const values: any[] = [];
-  const updatable = ['name','platform','status','budget','currency','spend','impressions','clicks','conversions','start_date','end_date','product_id','notes'];
+  const updatable = ['name','platform','status','budget','currency','spend','impressions','clicks','conversions','revenue','start_date','end_date','product_id','notes'];
   for (const k of updatable) {
     if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
   }
@@ -2258,4 +2412,685 @@ export function productsSummary(): string {
       return parts.join("\n")
     })
     .join("\n\n")
+}
+
+// ---------------------------------------------------------------------------
+// Referrals (client-to-client and attorney-to-attorney split-fee)
+// ---------------------------------------------------------------------------
+
+export interface Referral {
+  id: number; type: string; status: string;
+  referrer_kind: string; referrer_client_id: number | null; referrer_name: string | null;
+  referee_kind: string; referee_client_id: number | null; referee_name: string | null;
+  total_value: number | null; split_percent: number | null; split_amount: number | null;
+  currency: string; paid_at: string | null; notes: string | null;
+  created_at: string; updated_at: string;
+}
+export interface ReferralInput {
+  type?: string; status?: string;
+  referrer_kind?: string; referrer_client_id?: number | null; referrer_name?: string | null;
+  referee_kind?: string; referee_client_id?: number | null; referee_name?: string | null;
+  total_value?: number | null; split_percent?: number | null; split_amount?: number | null;
+  currency?: string; paid_at?: string | null; notes?: string | null;
+}
+export function addReferral(input: ReferralInput): Referral {
+  const db = crmDb(); const now = nowISO();
+  const res = db.run(`INSERT INTO referrals (type,status,referrer_kind,referrer_client_id,referrer_person_id,referrer_name,referee_kind,referee_client_id,referee_name,total_value,split_percent,split_amount,currency,paid_at,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [input.type ?? 'client_to_client', input.status ?? 'pending', input.referrer_kind ?? 'client', input.referrer_client_id ?? null, input.referrer_person_id ?? null, input.referrer_name ?? null, input.referee_kind ?? 'client', input.referee_client_id ?? null, input.referee_name ?? null, input.total_value ?? null, input.split_percent ?? null, input.split_amount ?? null, input.currency ?? 'EUR', input.paid_at ?? null, input.notes ?? null, now, now]);
+  const created = getReferral(Number(res.lastInsertRowid))!
+  // keep referral program in sync
+  try { const rr = ensureReferrerForReferral(created); if (rr) refreshReferrerStats(rr.id) } catch {}
+  return created
+}
+export function getReferral(id: number): Referral | null {
+  const row = crmDb().query('SELECT * FROM referrals WHERE id = ?').get(id) as any;
+  return row ? row as Referral : null;
+}
+export function listReferrals(type?: string, status?: string): Referral[] {
+  const db = crmDb();
+  const conds: string[] = []; const vals: any[] = [];
+  if (type) { conds.push('type = ?'); vals.push(type); }
+  if (status) { conds.push('status = ?'); vals.push(status); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  return db.query(`SELECT * FROM referrals ${where} ORDER BY updated_at DESC`).all(...vals) as Referral[];
+}
+export function updateReferral(id: number, patch: any): Referral | null {
+  const db = crmDb(); const existing = getReferral(id); if (!existing) return null;
+  const now = nowISO();
+  const fields: string[] = []; const values: any[] = [];
+  const updatable = ['type','status','referrer_kind','referrer_client_id','referrer_person_id','referrer_name','referee_kind','referee_client_id','referee_name','total_value','split_percent','split_amount','currency','paid_at','notes'];
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null); }
+  }
+  if (!fields.length) return existing;
+  fields.push('updated_at = ?'); values.push(now); values.push(id);
+  db.run(`UPDATE referrals SET ${fields.join(', ')} WHERE id = ?`, values);
+  const updated = getReferral(id);
+  try { if (updated) { const rr = ensureReferrerForReferral(updated); if (rr) refreshReferrerStats(rr.id) } } catch {}
+  return updated;
+}
+export function deleteReferral(id: number): boolean {
+  const ref = getReferral(id)
+  let rid: number | null = null
+  if (ref) {
+    const rr = crmDb().query("SELECT id FROM referrers WHERE person_id = ? OR client_id = ? OR name = ?").get(ref.referrer_person_id, ref.referrer_client_id, ref.referrer_name) as any
+    rid = rr ? rr.id : null
+  }
+  const res = crmDb().run('DELETE FROM referrals WHERE id = ?', [id]);
+  if (rid) try { refreshReferrerStats(rid) } catch {}
+  return (res.changes ?? 0) > 0;
+}
+
+// ===== People master (a person can hold multiple roles: client, referrer, ...) =====
+
+export interface Person {
+  id: number
+  name: string
+  email: string | null
+  phone: string | null
+  birthday: string | null
+  notes: string | null
+  roles: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonInput {
+  name: string
+  email?: string | null
+  phone?: string | null
+  birthday?: string | null
+  notes?: string | null
+  roles?: string[]
+}
+
+export function addPerson(input: PersonInput): Person {
+  const db = crmDb()
+  const now = nowISO()
+  const res = db.run(
+    "INSERT INTO people (name,email,phone,birthday,notes,roles,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    [input.name, input.email ?? null, input.phone ?? null, input.birthday ?? null, input.notes ?? null, JSON.stringify(input.roles ?? []), now, now],
+  )
+  return getPerson(Number(res.lastInsertRowid))!
+}
+
+export function getPerson(id: number): Person | null {
+  const row = crmDb().query("SELECT * FROM people WHERE id = ?").get(id) as any
+  return row ? (row as Person) : null
+}
+
+export function listPeople(role?: string): Person[] {
+  const db = crmDb()
+  const all = db.query("SELECT * FROM people ORDER BY name ASC").all() as Person[]
+  if (!role) return all
+  return all.filter((p) => {
+    try { return (JSON.parse(p.roles) as string[]).includes(role) } catch { return false }
+  })
+}
+
+export function findPersonByEmail(email: string): Person | null {
+  const row = crmDb().query("SELECT * FROM people WHERE email = ?").get(email) as any
+  return row ? (row as Person) : null
+}
+
+export function findPersonByName(name: string): Person | null {
+  const row = crmDb().query("SELECT * FROM people WHERE name = ?").get(name) as any
+  return row ? (row as Person) : null
+}
+
+export function updatePerson(id: number, patch: any): Person | null {
+  const db = crmDb()
+  const existing = getPerson(id)
+  if (!existing) return null
+  const fields: string[] = []
+  const values: any[] = []
+  for (const k of ["name", "email", "phone", "birthday", "notes", "roles"]) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) {
+      fields.push(`${k} = ?`)
+      values.push(k === "roles" && Array.isArray(patch[k]) ? JSON.stringify(patch[k]) : (patch[k] ?? null))
+    }
+  }
+  if (!fields.length) return existing
+  fields.push("updated_at = ?")
+  values.push(nowISO())
+  values.push(id)
+  db.run(`UPDATE people SET ${fields.join(", ")} WHERE id = ?`, values)
+  return getPerson(id)
+}
+
+export function addRoleToPerson(id: number, role: string): Person | null {
+  const p = getPerson(id)
+  if (!p) return null
+  let roles: string[] = []
+  try { roles = JSON.parse(p.roles) } catch {}
+  if (!roles.includes(role)) roles.push(role)
+  return updatePerson(id, { roles })
+}
+
+export function promoteClientToReferrer(clientId: number): Referrer | null {
+  const db = crmDb()
+  const client = db.query("SELECT * FROM clients WHERE id = ?").get(clientId) as any
+  if (!client) return null
+  // find or create person
+  let person: Person | null = client.person_id ? getPerson(client.person_id) : null
+  if (!person) {
+    person = addPerson({ name: client.name, email: client.email, phone: client.phone, notes: client.notes, roles: ["client", "referrer"] })
+    db.run("UPDATE clients SET person_id = ? WHERE id = ?", [person.id, clientId])
+  } else {
+    addRoleToPerson(person.id, "referrer")
+  }
+  // avoid duplicate referrer for same person
+  const existing = db.query("SELECT * FROM referrers WHERE person_id = ?").get(person.id) as any
+  if (existing) return existing as Referrer
+  return addReferrer({ name: person.name, email: person.email, phone: person.phone, birthday: person.birthday, notes: person.notes, person_id: person.id, client_id: clientId, tier: "bronze", points: 0 })
+}
+
+// ===== Referral <-> Referral Program sync =====
+
+export function findOrCreatePersonForReferrer(ref: any): Person | null {
+  if (!ref) return null
+  // by person_id
+  if (ref.referrer_person_id) {
+    const p = getPerson(ref.referrer_person_id)
+    if (p) return p
+  }
+  // by client
+  if (ref.referrer_client_id) {
+    const client = crmDb().query("SELECT * FROM clients WHERE id = ?").get(ref.referrer_client_id) as any
+    if (client) {
+      if (client.person_id) {
+        const p = getPerson(client.person_id)
+        if (p) return p
+      }
+      const p = addPerson({ name: client.name, email: client.email, phone: client.phone, notes: client.notes, roles: ["client", "referrer"] })
+      crmDb().run("UPDATE clients SET person_id = ? WHERE id = ?", [p.id, client.id])
+      return p
+    }
+  }
+  // by name
+  const name = (ref.referrer_name || "").trim()
+  if (name) {
+    const existing = findPersonByName(name)
+    if (existing) return existing
+    return addPerson({ name, roles: ["referrer"] })
+  }
+  return null
+}
+
+export function ensureReferrerForReferral(referral: any): Referrer | null {
+  const person = findOrCreatePersonForReferrer(referral)
+  if (!person) return null
+  const db = crmDb()
+  // link referral to person
+  if (referral.id && referral.referrer_person_id !== person.id) {
+    db.run("UPDATE referrals SET referrer_person_id = ? WHERE id = ?", [person.id, referral.id])
+  }
+  // find or create referrer
+  const existing = db.query("SELECT * FROM referrers WHERE person_id = ?").get(person.id) as any
+  if (existing) return existing as Referrer
+  // also match by client_id
+  if (referral.referrer_client_id) {
+    const byClient = db.query("SELECT * FROM referrers WHERE client_id = ?").get(referral.referrer_client_id) as any
+    if (byClient) {
+      // link person
+      db.run("UPDATE referrers SET person_id = ? WHERE id = ?", [person.id, byClient.id])
+      return getReferrer(byClient.id)
+    }
+  }
+  // by name
+  const byName = db.query("SELECT * FROM referrers WHERE name = ?").get(person.name) as any
+  if (byName) {
+    db.run("UPDATE referrers SET person_id = ? WHERE id = ?", [person.id, byName.id])
+    return getReferrer(byName.id)
+  }
+  return addReferrer({ name: person.name, email: person.email, phone: person.phone, birthday: person.birthday, notes: person.notes, person_id: person.id, client_id: referral.referrer_client_id ?? null, tier: "bronze", points: 0 })
+}
+
+export function refreshReferrerStats(referrerId: number): Referrer | null {
+  const r = getReferrer(referrerId)
+  if (!r) return null
+  const db = crmDb()
+  // find person
+  const personId = r.person_id
+  // find all referrals for this referrer
+  const conds: string[] = []
+  const vals: any[] = []
+  if (personId) { conds.push("referrer_person_id = ?"); vals.push(personId) }
+  if (r.client_id) { conds.push("referrer_client_id = ?"); vals.push(r.client_id) }
+  conds.push("referrer_name = ?"); vals.push(r.name)
+  const where = conds.length ? "WHERE " + conds.join(" OR ") : ""
+  const refs = db.query(`SELECT * FROM referrals ${where}`).all(...vals) as any[]
+  // distinct by id
+  const seen = new Set<number>()
+  const uniq = refs.filter((x) => { if (seen.has(x.id)) return false; seen.add(x.id); return true })
+  const count = uniq.length
+  let wonValue = 0
+  for (const ref of uniq) {
+    const status = (ref.status || "").toLowerCase()
+    const won = status === "completed" || status === "paid" || status === "accepted"
+    if (won && ref.referee_client_id) {
+      const client = db.query("SELECT deal_value FROM clients WHERE id = ?").get(ref.referee_client_id) as any
+      if (client && client.deal_value) wonValue += Number(client.deal_value)
+    } else if (won && ref.total_value) {
+      wonValue += Number(ref.total_value)
+    }
+  }
+  // points: 10 per referral + 50 per completed + 100 per paid (approx)
+  let points = 0
+  for (const ref of uniq) {
+    const status = (ref.status || "").toLowerCase()
+    points += 10
+    if (status === "completed") points += 40
+    if (status === "paid") points += 90
+  }
+  // tier
+  let tier: "bronze" | "silver" | "gold" = "bronze"
+  if (count >= 10 || wonValue >= 20000) tier = "gold"
+  else if (count >= 3 || wonValue >= 5000) tier = "silver"
+  db.run("UPDATE referrers SET points = ?, tier = ?, updated_at = ? WHERE id = ?", [points, tier, nowISO(), r.id])
+  return getReferrer(r.id)
+}
+
+export function getReferredLeads(referrerId: number): any[] {
+  const r = getReferrer(referrerId)
+  if (!r) return []
+  const db = crmDb()
+  const conds: string[] = []
+  const vals: any[] = []
+  if (r.person_id) { conds.push("referrer_person_id = ?"); vals.push(r.person_id) }
+  if (r.client_id) { conds.push("referrer_client_id = ?"); vals.push(r.client_id) }
+  conds.push("referrer_name = ?"); vals.push(r.name)
+  const where = conds.length ? "WHERE " + conds.join(" OR ") : ""
+  const refs = db.query(`SELECT * FROM referrals ${where} ORDER BY updated_at DESC`).all(...vals) as any[]
+  const seen = new Set<number>()
+  const uniq = refs.filter((x) => { if (seen.has(x.id)) return false; seen.add(x.id); return true })
+  const out: any[] = []
+  for (const ref of uniq) {
+    let client: any = null
+    if (ref.referee_client_id) {
+      client = db.query("SELECT id,name,status,deal_value,currency,company FROM clients WHERE id = ?").get(ref.referee_client_id) as any
+    }
+    out.push({
+      referral_id: ref.id,
+      referral_status: ref.status,
+      referee_name: client ? client.name : (ref.referee_name || "Unknown"),
+      client_id: client ? client.id : null,
+      stage: client ? client.status : null,
+      deal_value: client ? client.deal_value : ref.total_value,
+      currency: client ? client.currency : ref.currency,
+      company: client ? client.company : null,
+      split_amount: ref.split_amount,
+      paid_at: ref.paid_at,
+    })
+  }
+  return out
+}
+
+export function syncReferrersFromReferrals(): { created: number; updated: number } {
+  const db = crmDb()
+  const refs = db.query("SELECT * FROM referrals").all() as any[]
+  let created = 0, updated = 0
+  const seenReferrers = new Set<number>()
+  for (const ref of refs) {
+    const referrer = ensureReferrerForReferral(ref)
+    if (!referrer) continue
+    if (!seenReferrers.has(referrer.id)) {
+      seenReferrers.add(referrer.id)
+      refreshReferrerStats(referrer.id)
+      updated++
+    }
+  }
+  return { created, updated }
+}
+
+// ===== Referral Program (referrers, tiers, gamification, thank-yous) =====
+
+export interface Referrer {
+  id: number
+  person_id: number | null
+  name: string
+  email: string | null
+  phone: string | null
+  birthday: string | null
+  important_dates: string | null
+  client_id: number | null
+  tier: "bronze" | "silver" | "gold"
+  points: number
+  badges: string | null
+  notes: string | null
+  joined_at: string
+  last_thank_you_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ReferrerInput {
+  name: string
+  person_id?: number | null
+  email?: string | null
+  phone?: string | null
+  birthday?: string | null
+  important_dates?: string | null
+  client_id?: number | null
+  tier?: "bronze" | "silver" | "gold"
+  points?: number
+  badges?: string | null
+  notes?: string | null
+  joined_at?: string
+}
+
+export interface ReferralEvent {
+  id: number
+  referrer_id: number
+  referral_id: number | null
+  client_id: number | null
+  event_type: string
+  value: number | null
+  points: number
+  notes: string | null
+  occurred_at: string
+  created_at: string
+}
+
+export interface ReferralThankYou {
+  id: number
+  referrer_id: number
+  channel: string
+  subject: string | null
+  body: string | null
+  status: "draft" | "sent"
+  sent_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+const TIER_THRESHOLDS = { silver: { referrals: 3, value: 5000 }, gold: { referrals: 10, value: 20000 } }
+
+export function recomputeReferrerTier(id: number): Referrer | null {
+  const db = crmDb()
+  const r = getReferrer(id)
+  if (!r) return null
+  const stats = db.query(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(value),0) AS v FROM referral_events WHERE referrer_id = ? AND event_type IN ('referral','conversion','payment')",
+  ).get(id) as any
+  const n = Number(stats?.n ?? 0)
+  const v = Number(stats?.v ?? 0)
+  let tier: "bronze" | "silver" | "gold" = "bronze"
+  if (n >= TIER_THRESHOLDS.gold.referrals || v >= TIER_THRESHOLDS.gold.value) tier = "gold"
+  else if (n >= TIER_THRESHOLDS.silver.referrals || v >= TIER_THRESHOLDS.silver.value) tier = "silver"
+  db.run("UPDATE referrers SET tier = ?, updated_at = ? WHERE id = ?", [tier, nowISO(), id])
+  return getReferrer(id)
+}
+
+export function addReferrer(input: ReferrerInput): Referrer {
+  const db = crmDb()
+  // If linked to a person, pull canonical identity from people (master).
+  if (input.person_id) {
+    const p = getPerson(input.person_id)
+    if (p) {
+      input.name = input.name || p.name
+      input.email = input.email ?? p.email
+      input.phone = input.phone ?? p.phone
+      input.birthday = input.birthday ?? p.birthday
+      input.notes = input.notes ?? p.notes
+    }
+    addRoleToPerson(input.person_id, "referrer")
+  }
+  const now = nowISO()
+  const res = db.run(
+    `INSERT INTO referrers (person_id,name,email,phone,birthday,important_dates,client_id,tier,points,badges,notes,joined_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      input.person_id ?? null,
+      input.name,
+      input.email ?? null,
+      input.phone ?? null,
+      input.birthday ?? null,
+      input.important_dates ?? null,
+      input.client_id ?? null,
+      input.tier ?? "bronze",
+      input.points ?? 0,
+      input.badges ?? null,
+      input.notes ?? null,
+      input.joined_at ?? now,
+      now,
+      now,
+    ],
+  )
+  return getReferrer(Number(res.lastInsertRowid))!
+}
+
+export function getReferrer(id: number): Referrer | null {
+  const row = crmDb().query("SELECT * FROM referrers WHERE id = ?").get(id) as any
+  return row ? (row as Referrer) : null
+}
+
+export function listReferrers(tier?: string): Referrer[] {
+  const db = crmDb()
+  if (tier) return db.query("SELECT * FROM referrers WHERE tier = ? ORDER BY points DESC, name ASC").all(tier) as Referrer[]
+  return db.query("SELECT * FROM referrers ORDER BY points DESC, name ASC").all() as Referrer[]
+}
+
+export function updateReferrer(id: number, patch: any): Referrer | null {
+  const db = crmDb()
+  const existing = getReferrer(id)
+  if (!existing) return null
+  const updatable = ["person_id", "name", "email", "phone", "birthday", "important_dates", "client_id", "tier", "points", "badges", "notes", "joined_at", "last_thank_you_at"]
+  const fields: string[] = []
+  const values: any[] = []
+  for (const k of updatable) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null) }
+  }
+  if (!fields.length) return existing
+  fields.push("updated_at = ?")
+  values.push(nowISO())
+  values.push(id)
+  db.run(`UPDATE referrers SET ${fields.join(", ")} WHERE id = ?`, values)
+  return getReferrer(id)
+}
+
+export function deleteReferrer(id: number): boolean {
+  const res = crmDb().run("DELETE FROM referrers WHERE id = ?", [id])
+  return (res.changes ?? 0) > 0
+}
+
+export function addReferralEvent(input: { referrer_id: number; referral_id?: number | null; client_id?: number | null; event_type?: string; value?: number | null; points?: number; notes?: string | null; occurred_at?: string }): ReferralEvent {
+  const db = crmDb()
+  const now = nowISO()
+  const occurred = input.occurred_at ?? now
+  const pts = input.points ?? defaultPointsFor(input.event_type ?? "referral")
+  const res = db.run(
+    `INSERT INTO referral_events (referrer_id,referral_id,client_id,event_type,value,points,notes,occurred_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    [input.referrer_id, input.referral_id ?? null, input.client_id ?? null, input.event_type ?? "referral", input.value ?? null, pts, input.notes ?? null, occurred, now],
+  )
+  // award points to referrer
+  db.run("UPDATE referrers SET points = points + ?, updated_at = ? WHERE id = ?", [pts, now, input.referrer_id])
+  // recompute tier
+  recomputeReferrerTier(input.referrer_id)
+  // award badges
+  awardBadges(input.referrer_id)
+  return getReferralEvent(Number(res.lastInsertRowid))!
+}
+
+function defaultPointsFor(type: string): number {
+  switch (type) {
+    case "referral": return 10
+    case "conversion": return 50
+    case "payment": return 100
+    case "bonus": return 25
+    default: return 5
+  }
+}
+
+export function getReferralEvent(id: number): ReferralEvent | null {
+  const row = crmDb().query("SELECT * FROM referral_events WHERE id = ?").get(id) as any
+  return row ? (row as ReferralEvent) : null
+}
+
+export function listReferralEvents(referrer_id?: number): ReferralEvent[] {
+  const db = crmDb()
+  if (referrer_id) return db.query("SELECT * FROM referral_events WHERE referrer_id = ? ORDER BY occurred_at DESC").all(referrer_id) as ReferralEvent[]
+  return db.query("SELECT * FROM referral_events ORDER BY occurred_at DESC").all() as ReferralEvent[]
+}
+
+export function deleteReferralEvent(id: number): boolean {
+  const ev = getReferralEvent(id)
+  if (!ev) return false
+  const db = crmDb()
+  db.run("DELETE FROM referral_events WHERE id = ?", [id])
+  // subtract points
+  db.run("UPDATE referrers SET points = MAX(0, points - ?), updated_at = ? WHERE id = ?", [ev.points, nowISO(), ev.referrer_id])
+  recomputeReferrerTier(ev.referrer_id)
+  return true
+}
+
+export function awardBadges(referrer_id: number): string[] {
+  const db = crmDb()
+  const r = getReferrer(referrer_id)
+  if (!r) return []
+  const events = listReferralEvents(referrer_id)
+  const n = events.filter(e => e.event_type === "referral" || e.event_type === "conversion" || e.event_type === "payment").length
+  const badges = new Set<string>((r.badges ? JSON.parse(r.badges) : []) as string[])
+  if (events.length >= 1) badges.add("first_referral")
+  if (n >= 5) badges.add("five_referrals")
+  if (n >= 10) badges.add("ten_referrals")
+  if (r.tier === "gold") badges.add("gold_tier")
+  if (r.tier === "silver") badges.add("silver_tier")
+  const arr = [...badges]
+  db.run("UPDATE referrers SET badges = ?, updated_at = ? WHERE id = ?", [JSON.stringify(arr), nowISO(), referrer_id])
+  return arr
+}
+
+export function referralLeaderboard(limit: number = 10): (Referrer & { referral_count: number; won_value: number })[] {
+  const db = crmDb()
+  const rows = db.query(`
+    SELECT r.*,
+      (SELECT COUNT(*) FROM referral_events e WHERE e.referrer_id = r.id) AS referral_count,
+      (SELECT COALESCE(SUM(value),0) FROM referral_events e WHERE e.referrer_id = r.id AND e.event_type IN ('conversion','payment')) AS won_value
+    FROM referrers r ORDER BY r.points DESC, referral_count DESC LIMIT ?
+  `).all(limit) as any[]
+  return rows.map((row) => ({ ...row, referral_count: Number(row.referral_count), won_value: Number(row.won_value) }))
+}
+
+export function upcomingReferrerBirthdays(days: number = 30): Referrer[] {
+  const db = crmDb()
+  const all = listReferrers()
+  const today = new Date()
+  const out: Referrer[] = []
+  for (const r of all) {
+    if (!r.birthday) continue
+    // birthday stored YYYY-MM-DD (or MM-DD). Normalize.
+    const b = r.birthday.trim()
+    let month: number, day: number
+    if (/^\d{4}-\d{2}-\d{2}$/.test(b)) { month = Number(b.slice(5, 7)); day = Number(b.slice(8, 10)) }
+    else if (/^\d{2}-\d{2}$/.test(b)) { month = Number(b.slice(0, 2)); day = Number(b.slice(3, 5)) }
+    else continue
+    // next occurrence
+    const y = today.getFullYear()
+    let next = new Date(y, month - 1, day)
+    if (next < new Date(today.getFullYear(), today.getMonth(), today.getDate())) next = new Date(y + 1, month - 1, day)
+    const diff = (next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+    if (diff >= 0 && diff <= days) out.push(r)
+  }
+  return out.sort((a, b) => a.birthday! < b.birthday! ? -1 : 1)
+}
+
+export function pendingThankYous(): ReferralThankYou[] {
+  return crmDb().query("SELECT * FROM referral_thank_yous WHERE status = 'draft' ORDER BY created_at DESC").all() as ReferralThankYou[]
+}
+
+export function addThankYou(input: { referrer_id: number; channel?: string; subject?: string | null; body?: string | null; status?: string; sent_at?: string | null }): ReferralThankYou {
+  const db = crmDb()
+  const now = nowISO()
+  const res = db.run(
+    `INSERT INTO referral_thank_yous (referrer_id,channel,subject,body,status,sent_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+    [input.referrer_id, input.channel ?? "email", input.subject ?? null, input.body ?? null, input.status ?? "draft", input.sent_at ?? null, now, now],
+  )
+  return getThankYou(Number(res.lastInsertRowid))!
+}
+
+export function getThankYou(id: number): ReferralThankYou | null {
+  const row = crmDb().query("SELECT * FROM referral_thank_yous WHERE id = ?").get(id) as any
+  return row ? (row as ReferralThankYou) : null
+}
+
+export function listThankYous(referrer_id?: number): ReferralThankYou[] {
+  const db = crmDb()
+  if (referrer_id) return db.query("SELECT * FROM referral_thank_yous WHERE referrer_id = ? ORDER BY created_at DESC").all(referrer_id) as ReferralThankYou[]
+  return db.query("SELECT * FROM referral_thank_yous ORDER BY created_at DESC").all() as ReferralThankYou[]
+}
+
+export function updateThankYou(id: number, patch: any): ReferralThankYou | null {
+  const db = crmDb()
+  const existing = getThankYou(id)
+  if (!existing) return null
+  const fields: string[] = []
+  const values: any[] = []
+  for (const k of ["channel", "subject", "body", "status", "sent_at"]) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) { fields.push(`${k} = ?`); values.push(patch[k] ?? null) }
+  }
+  if (!fields.length) return existing
+  fields.push("updated_at = ?")
+  values.push(nowISO())
+  values.push(id)
+  db.run(`UPDATE referral_thank_yous SET ${fields.join(", ")} WHERE id = ?`, values)
+  if (patch.status === "sent") {
+    db.run("UPDATE referrers SET last_thank_you_at = ?, updated_at = ? WHERE id = ?", [nowISO(), nowISO(), existing.referrer_id])
+  }
+  return getThankYou(id)
+}
+
+export function deleteThankYou(id: number): boolean {
+  const res = crmDb().run("DELETE FROM referral_thank_yous WHERE id = ?", [id])
+  return (res.changes ?? 0) > 0
+}
+
+export function seedReferralExample(): { ok: boolean; created: number } {
+  const db = crmDb()
+  // avoid duplicating if already seeded
+  const existing = db.query("SELECT COUNT(*) AS n FROM referrers WHERE name IN ('Alice Rossi','Marco Bianchi','Sofia Verdi')").get() as any
+  if (Number(existing?.n ?? 0) > 0) return { ok: true, created: 0 }
+  let created = 0
+  const a = addReferrer({ name: "Alice Rossi", email: "alice@example.com", phone: "+39 333 1112233", birthday: "1985-11-20", tier: "gold", points: 0, notes: "Top referrer — brings clinic clients." })
+  created++
+  const b = addReferrer({ name: "Marco Bianchi", email: "marco@example.com", phone: "+39 347 9988776", birthday: "1978-12-05", tier: "silver", points: 0, notes: "Attorney partner, split-fee referrals." })
+  created++
+  const c = addReferrer({ name: "Sofia Verdi", email: "sofia@example.com", birthday: "1990-11-12", tier: "bronze", points: 0, notes: "New referrer." })
+  created++
+  // events
+  addReferralEvent({ referrer_id: a.id, event_type: "referral", value: 1200, notes: "Referred Studio Rossi (dental)" })
+  addReferralEvent({ referrer_id: a.id, event_type: "conversion", value: 3500, notes: "Studio Rossi signed" })
+  addReferralEvent({ referrer_id: a.id, event_type: "payment", value: 3500, notes: "Payment received" })
+  addReferralEvent({ referrer_id: b.id, event_type: "referral", value: 800, notes: "Referred Avv. Conti" })
+  addReferralEvent({ referrer_id: b.id, event_type: "conversion", value: 2200, notes: "Engagement signed" })
+  addReferralEvent({ referrer_id: c.id, event_type: "referral", value: 500, notes: "Referred Farmacia X" })
+  // thank you
+  addThankYou({ referrer_id: a.id, channel: "email", subject: "Thank you, Alice!", body: "Dear Alice,\n\nThank you for referring Studio Rossi. Your support means a lot.\n\nWarm regards,\nDario", status: "draft" })
+  addThankYou({ referrer_id: b.id, channel: "letter", subject: "Thank you, Marco", body: "Dear Marco,\n\nThank you for the attorney referral.\n\nBest,\nDario", status: "sent", sent_at: new Date().toISOString() })
+  return { ok: true, created }
+}
+
+export function referralDashboard(): any {
+  const db = crmDb()
+  const total = (db.query("SELECT COUNT(*) AS n FROM referrers").get() as any)?.n ?? 0
+  const byTier = db.query("SELECT tier, COUNT(*) AS n FROM referrers GROUP BY tier").all() as any[]
+  const tierMap: Record<string, number> = { bronze: 0, silver: 0, gold: 0 }
+  for (const r of byTier) tierMap[r.tier] = Number(r.n)
+  const totalPoints = (db.query("SELECT COALESCE(SUM(points),0) AS s FROM referrers").get() as any)?.s ?? 0
+  const totalEvents = (db.query("SELECT COUNT(*) AS n FROM referral_events").get() as any)?.n ?? 0
+  const wonValue = (db.query("SELECT COALESCE(SUM(value),0) AS s FROM referral_events WHERE event_type IN ('conversion','payment')").get() as any)?.s ?? 0
+  const upcoming = upcomingReferrerBirthdays(30)
+  const pending = pendingThankYous()
+  const recent = listReferralEvents().slice(0, 10)
+  const top = referralLeaderboard(5)
+  return {
+    total_referrers: Number(total),
+    by_tier: tierMap,
+    total_points: Number(totalPoints),
+    total_events: Number(totalEvents),
+    won_value: Number(wonValue),
+    upcoming_birthdays: upcoming,
+    pending_thank_yous: pending.length,
+    recent_events: recent,
+    top_referrers: top,
+  }
 }

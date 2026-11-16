@@ -42,7 +42,7 @@ outreach add:    client_id = 1
 outreach draft:  client_id = 1, subject = "...", body = "..."
 ```
 
-The draft lands as a file in `~/.elitza/pipeline/<date>/C1-<slug>.md` with the opt-out footer already written in. Read it, edit it if you want, then:
+The draft lands as a file in `~/.ai-enablement-agent/pipeline/<date>/C1-<slug>.md` with the opt-out footer already written in. Read it, edit it if you want, then:
 
 ```text
 outreach approve: ids = [1]
@@ -116,7 +116,7 @@ playbook list
 playbook read: name = "ai-enablement-diagnosis"
 ```
 
-Six playbooks ship with her (diagnosis, proposal, workbook library, call script, payment terms, handover) and each is also a skill she pulls in on her own. Drop your own `.md` into `~/.elitza/brain/procedural/` and it joins the library; nothing you edit there is ever overwritten.
+Six playbooks ship with her (diagnosis, proposal, workbook library, call script, payment terms, handover) and each is also a skill she pulls in on her own. Drop your own `.md` into `~/.ai-enablement-agent/brain/procedural/` and it joins the library; nothing you edit there is ever overwritten.
 
 ## 8. Hand over
 

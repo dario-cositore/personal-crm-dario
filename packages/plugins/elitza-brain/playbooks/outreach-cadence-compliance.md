@@ -24,7 +24,7 @@ After touch 4 with no reply: move the client to the stale list for nurture.
 
 - Nothing sends without batch approval.
 - An unapproved row is refused with a reason, never a silent success.
-- Drafts live as files under ~/.elitza/pipeline/<date>/.
+- Drafts live as files under ~/.ai-enablement-agent/pipeline/<date>/.
 - The cadence is drafted by the heartbeat, approved by you, sent by command.
 - Disposition: yes -> production. no or silence -> stale list.
 

@@ -3,8 +3,8 @@
  * actual production brain (never the original). The hard guarantee: no memory
  * may be deleted, consolidation/links/reflection should all happen.
  *
- * Expects ELITZA_HOME to point at the sandbox (with a copied soul_v2.db).
- * Run: ELITZA_HOME=/tmp/opencode/real-brain-sandbox bun run script/heartbeat-realbrain.ts
+ * Expects AI_ENABLEMENT_HOME to point at the sandbox (with a copied soul_v2.db).
+ * Run: AI_ENABLEMENT_HOME=/tmp/opencode/real-brain-sandbox bun run script/heartbeat-realbrain.ts
  */
 
 import assert from "node:assert"

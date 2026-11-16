@@ -9,7 +9,7 @@
  *
  * Tokens can be delegated (if `delegatable`) to a narrower audience with a
  * subset of capabilities and an expiry no later than the parent's. Revoked
- * nonces are persisted under ~/.elitza so revocation survives restarts.
+ * nonces are persisted under ~/.ai-enablement-agent so revocation survives restarts.
  *
  * Stored form: `cap.<base64url(payload)>.<base64url(signature)>`.
  */
@@ -17,11 +17,11 @@
 import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
-import { ELITZA_HOME as _ELITZA_HOME } from "./db.js"
+import { AI_ENABLEMENT_HOME as _AI_ENABLEMENT_HOME } from "./db.js"
 import { getIdentity, sign, verify, sha256 } from "./identity.js"
 
-export function revokedPath(): string { return path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "revoked-capabilities.json") }
-export function issuedPath(): string { return path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "issued-capabilities.json") }
+export function revokedPath(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "revoked-capabilities.json") }
+export function issuedPath(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "issued-capabilities.json") }
 
 export interface Capability {
   action: string
@@ -78,7 +78,7 @@ function loadRevoked(): Set<string> {
 }
 
 function saveRevoked(set: Set<string>): void {
-  fs.mkdirSync(process.env.ELITZA_HOME ?? _ELITZA_HOME, { recursive: true })
+  fs.mkdirSync((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, { recursive: true })
   fs.writeFileSync(revokedPath(), JSON.stringify([...set], null, 2), { mode: 0o600 })
 }
 
@@ -92,7 +92,7 @@ function loadIssued(): CapabilityClaims[] {
 }
 
 function saveIssued(list: CapabilityClaims[]): void {
-  fs.mkdirSync(process.env.ELITZA_HOME ?? _ELITZA_HOME, { recursive: true })
+  fs.mkdirSync((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, { recursive: true })
   // Keep last 500.
   const trimmed = list.slice(-500)
   fs.writeFileSync(issuedPath(), JSON.stringify(trimmed, null, 2), { mode: 0o600 })
@@ -213,15 +213,15 @@ export function listRevoked(): string[] {
 
 function loadSessionCaps(): Record<string, string> {
   try {
-    return JSON.parse(fs.readFileSync(path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "session-capabilities.json"), "utf8")) as Record<string, string>
+    return JSON.parse(fs.readFileSync(path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "session-capabilities.json"), "utf8")) as Record<string, string>
   } catch {
     return {}
   }
 }
 
 function saveSessionCaps(map: Record<string, string>): void {
-  fs.mkdirSync(process.env.ELITZA_HOME ?? _ELITZA_HOME, { recursive: true })
-  fs.writeFileSync(path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "session-capabilities.json"), JSON.stringify(map, null, 2), { mode: 0o600 })
+  fs.mkdirSync((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, { recursive: true })
+  fs.writeFileSync(path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "session-capabilities.json"), JSON.stringify(map, null, 2), { mode: 0o600 })
 }
 
 export function attachSession(sessionID: string, token: string): void {

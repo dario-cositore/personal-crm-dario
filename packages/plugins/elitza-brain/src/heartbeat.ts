@@ -25,7 +25,7 @@
  *
  *   POLL    the gapfeed radar (Task 4b): every ELITZA_GAPFEED_POLL_MINUTES
  *           (default 6h) read the LOCAL gapfeed backend and write outreach
- *           drafts to ~/.elitza/pipeline/. Interval-gated inside
+ *           drafts to ~/.ai-enablement-agent/pipeline/. Interval-gated inside
  *           pollPipeline, so ticks are free when it is not due. A stopped
  *           backend is a no-op; drafts are files, nothing is ever sent.
  *

@@ -25,9 +25,9 @@ const placeholder = {
 
 const tips = [
   "Add your MiMo key with /setup, or /connect another provider",
-  "Elitza learns as you work — memories build up in ~/.elitza",
+  "Elitza learns as you work — memories build up in ~/.ai-enablement-agent",
   "Switch brains anytime with /models — your MiMo key, or BYOK",
-  "Make her yours — edit ~/.elitza/SOUL.md and personas",
+  "Make her yours — edit ~/.ai-enablement-agent/SOUL.md and personas",
   "Type / for commands and @ for files — ctrl+p opens the palette",
 ]
 

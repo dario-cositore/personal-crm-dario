@@ -10,7 +10,7 @@ reproduction will be closed.
 
 ## Threat model in one paragraph
 
-Elitza is a local agent: it holds your provider keys under `~/.elitza`, runs commands you approve, and reads/writes
+Elitza is a local agent: it holds your provider keys under `~/.ai-enablement-agent`, runs commands you approve, and reads/writes
 files in your projects. It phones home only to the provider endpoint you configured (for example OpenRouter) and to
 fetch its own update metadata. Session data and memory (`soul.db`) stay on your machine. Review the permissions
 prompts in the TUI — every command and file write can be gated.

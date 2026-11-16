@@ -9,7 +9,7 @@
 import assert from "node:assert"
 
 const home = `/tmp/elitza-hb-int-${Date.now()}`
-process.env.ELITZA_HOME = home
+process.env.AI_ENABLEMENT_HOME = home
 
 const { storeEpisodic, getMetamemory } = await import("../src/memory.ts")
 const { EmotionEngine } = await import("../src/emotion.ts")
@@ -65,10 +65,10 @@ console.log("3. ELITZA_HEARTBEAT=0 disables the loop: OK")
 
 // ---------------------------------------------------------------------------
 // 3. A throwing brain never kills the host — the process keeps running.
-//    Point ELITZA_HOME at an unwritable path so db() throws inside tend().
+//    Point AI_ENABLEMENT_HOME at an unwritable path so db() throws inside tend().
 // ---------------------------------------------------------------------------
 const badHome = `/proc/elitza-cannot-write-here-${Date.now()}`
-process.env.ELITZA_HOME = badHome
+process.env.AI_ENABLEMENT_HOME = badHome
 const resilient = startHeartbeat(new EmotionEngine(), 25)
 await sleep(120)
 resilient.stop()

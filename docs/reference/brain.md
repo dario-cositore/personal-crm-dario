@@ -8,20 +8,20 @@ Back to the [README](../../README.md), or see [configuration](configuration.md) 
 
 | Path | Contents |
 | --- | --- |
-| `~/.elitza/brain/soul_v2.db` | Memories, links, recall log, session log, doctor history, tasks |
-| `~/.elitza/brain/crm.db` | Clients, interactions, assets and the outreach pipeline — a separate file on purpose, so client data never enters the memory index and can be backed up or wiped alone |
-| `~/.elitza/SOUL.md` | Core identity, plain markdown, edit it and she changes |
-| `~/.elitza/PERSONA.md` | What guided setup wrote about your answers |
-| `~/.elitza/personas/` | Who she is talking to (JSON) |
-| `~/.elitza/roles/` | How she should behave in a given role (JSON) |
-| `~/.elitza/hooks/` | Event hooks (JSON) |
-| `~/.elitza/brain/procedural/` | Playbooks: six curated ones seeded on load, plus skills she writes herself |
-| `~/.elitza/brain/conversations/` | Extracted conversation JSON per session |
-| `~/.elitza/pipeline/<date>/` | Outreach drafts waiting for your batch approval |
-| `~/.elitza/soul/emotions/state.json` | Current emotional state |
-| `~/.elitza/soul/emotions/emotion_log.jsonl` | Emotional history |
+| `~/.ai-enablement-agent/brain/soul_v2.db` | Memories, links, recall log, session log, doctor history, tasks |
+| `~/.ai-enablement-agent/brain/crm.db` | Clients, interactions, assets and the outreach pipeline — a separate file on purpose, so client data never enters the memory index and can be backed up or wiped alone |
+| `~/.ai-enablement-agent/SOUL.md` | Core identity, plain markdown, edit it and she changes |
+| `~/.ai-enablement-agent/PERSONA.md` | What guided setup wrote about your answers |
+| `~/.ai-enablement-agent/personas/` | Who she is talking to (JSON) |
+| `~/.ai-enablement-agent/roles/` | How she should behave in a given role (JSON) |
+| `~/.ai-enablement-agent/hooks/` | Event hooks (JSON) |
+| `~/.ai-enablement-agent/brain/procedural/` | Playbooks: six curated ones seeded on load, plus skills she writes herself |
+| `~/.ai-enablement-agent/brain/conversations/` | Extracted conversation JSON per session |
+| `~/.ai-enablement-agent/pipeline/<date>/` | Outreach drafts waiting for your batch approval |
+| `~/.ai-enablement-agent/soul/emotions/state.json` | Current emotional state |
+| `~/.ai-enablement-agent/soul/emotions/emotion_log.jsonl` | Emotional history |
 
-Set `ELITZA_HOME` to move the whole tree somewhere else (source: `packages/plugins/elitza-brain/src/db.ts`). The installed binary leaves it at the default `~/.elitza`.
+Set `AI_ENABLEMENT_HOME` to move the whole tree somewhere else (source: `packages/plugins/elitza-brain/src/db.ts`). The installed binary leaves it at the default `~/.ai-enablement-agent`.
 
 The CRM tables have a browser front end as well as the `crm` tool: the [CRM house](../guide/crm-house.md), served by this same plugin on `127.0.0.1:8787`. `clients` carries four social columns (`linkedin`, `twitter`, `facebook`, `instagram`) that enrichment and the house both write.
 
@@ -54,7 +54,7 @@ Each memory carries an importance score between 0 and 1, a valence, tags and a f
 
 ## Identity
 
-`~/.elitza/SOUL.md` is her core self: who she is, how she talks, what she refuses. It is read on every prompt build and inserted at the top of the system prompt. If the file is missing the plugin falls back to a built in default (`src/prompt.ts`).
+`~/.ai-enablement-agent/SOUL.md` is her core self: who she is, how she talks, what she refuses. It is read on every prompt build and inserted at the top of the system prompt. If the file is missing the plugin falls back to a built in default (`src/prompt.ts`).
 
 Change her by editing the file. No recompile, no restart dance beyond the normal reload.
 
@@ -64,9 +64,9 @@ These are directories, not database tables, on purpose: they are readable, diffa
 
 | Directory | File shape | Effect |
 | --- | --- | --- |
-| `~/.elitza/personas` | JSON per person she works with | Who she is talking to: name, context, preferences |
-| `~/.elitza/roles` | JSON per role | How she should behave: tone, constraints, priorities |
-| `~/.elitza/hooks` | JSON per event hook | What she does when an event fires |
+| `~/.ai-enablement-agent/personas` | JSON per person she works with | Who she is talking to: name, context, preferences |
+| `~/.ai-enablement-agent/roles` | JSON per role | How she should behave: tone, constraints, priorities |
+| `~/.ai-enablement-agent/hooks` | JSON per event hook | What she does when an event fires |
 
 `brain_config` and `brain_personality` show the resolved view of all three without leaving the session.
 
@@ -74,7 +74,7 @@ These are directories, not database tables, on purpose: they are readable, diffa
 
 Two different stores, both reachable from a session:
 
-- **Playbook files** in `~/.elitza/brain/procedural/`. The curated library (`src/knowledge.ts`) seeds six of them on every load — `ai-enablement-diagnosis`, `fixed-scope-proposal`, `workbook-library`, `discovery-call-script`, `payment-terms`, `client-handover` — and a file you edited is never overwritten. Every `.md` in that folder, curated or your own, is registered as a skill at load time (same path as `~/.elitza/skills/<name>/SKILL.md`), so she pulls the right one in on her own. `playbook list`, `playbook read` and `playbook seed` reach the same folder from the session, and `/skills` lists them.
+- **Playbook files** in `~/.ai-enablement-agent/brain/procedural/`. The curated library (`src/knowledge.ts`) seeds six of them on every load — `ai-enablement-diagnosis`, `fixed-scope-proposal`, `workbook-library`, `discovery-call-script`, `payment-terms`, `client-handover` — and a file you edited is never overwritten. Every `.md` in that folder, curated or your own, is registered as a skill at load time (same path as `~/.ai-enablement-agent/skills/<name>/SKILL.md`), so she pulls the right one in on her own. `playbook list`, `playbook read` and `playbook seed` reach the same folder from the session, and `/skills` lists them.
 - **Learned procedures as memories.** After each conversation the learning pass (`src/learning.ts`) extracts skills, facts and lessons and stores them with `storeProcedural` / `storeSemantic` into `soul_v2.db`, full-text indexed — so they come back through `brain_search` and `brain_learning`, not as files.
 
 This is the compounding part: the tenth time she does a task type, she is reading her own notes instead of rediscovering the steps.

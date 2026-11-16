@@ -45,7 +45,7 @@ Under the hood it is three things:
 2. **A MiMo-only model client.** Her guided setup wires one provider, Xiaomi MiMo, on your own key. No OpenRouter path, no fallback, nothing bundled and nothing metered. The affiliate invite code `HFSR94` takes 10% off your first paid Token Plan order.
 3. **A memory and an operating record.** A SQLite brain (`soul_v2.db`) with typed memories, personas and skills she writes herself, plus a separate CRM database (`crm.db`) holding clients, interactions, assets and the outreach pipeline.
 
-Everything runs locally. Keys, config, sessions, memory and client records stay under `~/.elitza`. The only outbound traffic is to the model provider you configured, the Places lookup you asked for, the Resend call you approved, and release metadata.
+Everything runs locally. Keys, config, sessions, memory and client records stay under `~/.ai-enablement-agent`. The only outbound traffic is to the model provider you configured, the Places lookup you asked for, the Resend call you approved, and release metadata.
 
 ## Direction
 
@@ -83,13 +83,13 @@ Full walkthrough with real commands: [docs/guide/first-client.md](docs/guide/fir
 First boot opens a setup wizard that walks you through the MiMo account (invite code `HFSR94`, 10% off the first paid Token Plan order), the endpoint for your region, and your key — masked as you type, stored mode 600, never echoed. No provider sprawl, no fallback to guess about.
 
 **A CRM that is just a database.**
-Clients, interactions and assets live in `~/.elitza/brain/crm.db` with a shared status lifecycle from `scouted` to `done`. Query it with `crm search`, patch it with `crm update`, read the story with `crm interactions`. It never enters the memory index.
+Clients, interactions and assets live in `~/.ai-enablement-agent/brain/crm.db` with a shared status lifecycle from `scouted` to `done`. Query it with `crm search`, patch it with `crm update`, read the story with `crm interactions`. It never enters the memory index.
 
 **A CRM house in the browser.**
 The same records, as a page: `elitza serve` (or the background service) starts a zero-build dashboard on `127.0.0.1:8787` and opens it for you — pipeline board, approval queue, scout screen, and a client detail where the website, email, phone, address and every social profile are real links. One input per network saves a social profile back to the row, and **Enrich** scrapes their own site for contacts and socials before running the diagnosis and proposal over your playbooks. Same database, same modules as the terminal. [docs/guide/crm-house.md](docs/guide/crm-house.md).
 
 **Nothing sends without you.**
-Outreach is drafted to files under `~/.elitza/pipeline/<date>/` with the compliance footer already in. Approve a batch, then one command sends it. An unapproved row is refused with a reason, never a silent success.
+Outreach is drafted to files under `~/.ai-enablement-agent/pipeline/<date>/` with the compliance footer already in. Approve a batch, then one command sends it. An unapproved row is refused with a reason, never a silent success.
 
 **A memory that compounds.**
 Memories are typed (episodic, semantic, procedural, emotional), scored for importance, decayed over time and consolidated when they prove useful. Personas, roles and hooks are plain directories of JSON and markdown you can read and edit.
@@ -127,7 +127,7 @@ Setup opens itself on first start as a popup wizard: it asks who she is, what sh
 
 Would rather stay in a browser? `elitza serve` (or `elitza service start`) runs the whole thing in the background and opens the [CRM house](docs/guide/crm-house.md) on `127.0.0.1:8787` — board, approval queue, scout and client records. The terminal is the power surface, not a requirement.
 
-The installer downloads a prebuilt binary plus the brain plugin, installs them at `~/.elitza/agent`, writes the `elitza` launcher into `~/.local/bin` and seeds your config, `SOUL.md` and personas. It is safe to re-run, and `--uninstall` reverses it. Full options: [docs/guide/install.md](docs/guide/install.md).
+The installer downloads a prebuilt binary plus the brain plugin, installs them at `~/.ai-enablement-agent/agent`, writes the `elitza` launcher into `~/.local/bin` and seeds your config, `SOUL.md` and personas. It is safe to re-run, and `--uninstall` reverses it. Full options: [docs/guide/install.md](docs/guide/install.md).
 
 ## Commands
 
@@ -226,11 +226,11 @@ Type `/` in the composer for the command menu, `ctrl+p` for the fuzzy command pa
 
 The brain plugin (`packages/plugins/elitza-brain`) gives her a persistent self:
 
-- **Memory.** SQLite at `~/.elitza/brain/soul_v2.db`. Episodic (episodes, 1000 max), semantic (facts, 500), procedural (skills, 200) and emotional (300) memories, plus a full text index, a recall log and a session log. Memories carry importance and valence, decay on a schedule, and get consolidated when they cross the threshold.
-- **The CRM.** SQLite at `~/.elitza/brain/crm.db`: `clients`, `client_interactions`, `client_assets` and the `pipeline` table with its cadence state. Deliberately a separate file, so client data stays out of the memory index and can be backed up or wiped on its own.
-- **Identity.** `~/.elitza/SOUL.md` is her core personality in plain markdown, `~/.elitza/PERSONA.md` is what guided setup wrote about your answers. Edit either and she changes.
-- **Personas, roles and hooks.** Directories of JSON and markdown under `~/.elitza` for who she is talking to, how she should behave, and what she should do on an event.
-- **Playbooks.** Curated knowledge in `~/.elitza/brain/procedural/` — diagnosis, proposal, workbook library, call script, payment terms, handover. Seeded on load, never overwriting your edits, and registered as skills so she pulls the right one in herself. Your own `.md` files dropped in that folder join the library.
+- **Memory.** SQLite at `~/.ai-enablement-agent/brain/soul_v2.db`. Episodic (episodes, 1000 max), semantic (facts, 500), procedural (skills, 200) and emotional (300) memories, plus a full text index, a recall log and a session log. Memories carry importance and valence, decay on a schedule, and get consolidated when they cross the threshold.
+- **The CRM.** SQLite at `~/.ai-enablement-agent/brain/crm.db`: `clients`, `client_interactions`, `client_assets` and the `pipeline` table with its cadence state. Deliberately a separate file, so client data stays out of the memory index and can be backed up or wiped on its own.
+- **Identity.** `~/.ai-enablement-agent/SOUL.md` is her core personality in plain markdown, `~/.ai-enablement-agent/PERSONA.md` is what guided setup wrote about your answers. Edit either and she changes.
+- **Personas, roles and hooks.** Directories of JSON and markdown under `~/.ai-enablement-agent` for who she is talking to, how she should behave, and what she should do on an event.
+- **Playbooks.** Curated knowledge in `~/.ai-enablement-agent/brain/procedural/` — diagnosis, proposal, workbook library, call script, payment terms, handover. Seeded on load, never overwriting your edits, and registered as skills so she pulls the right one in herself. Your own `.md` files dropped in that folder join the library.
 - **26 tools** exposed to the model: the `brain_*` memory set, `doctor_check` / `doctor_repair` / `doctor_history`, `gapfeed_query_signals` / `gapfeed_build_pipeline`, and the operator set `client_scout`, `crm`, `enrich_client`, `outreach`, `production`, `playbook`, `handover` and `task` (plus `rv_session` when the dual-mind API is configured).
 
 Full reference: [docs/reference/brain.md](docs/reference/brain.md).
@@ -239,17 +239,17 @@ Full reference: [docs/reference/brain.md](docs/reference/brain.md).
 
 | Path | What lives there |
 | --- | --- |
-| `~/.elitza/agent` | The installed release (binary + brain plugin) |
-| `~/.elitza/brain/soul_v2.db` | Memories, links, recall log, session log, tasks |
-| `~/.elitza/brain/crm.db` | Clients, interactions, assets, outreach pipeline |
-| `~/.elitza/brain/procedural/` | Playbooks (curated and auto-generated), one markdown each |
-| `~/.elitza/pipeline/<date>/` | Outreach drafts waiting for your batch approval |
-| `~/.elitza/SOUL.md` | Her identity. Edit to make her yours |
-| `~/.elitza/personas`, `roles`, `hooks` | Persona, role and hook definitions |
-| `~/.elitza/home/config` | Installed config (`opencode.json`) and service credential |
-| `~/.elitza/home/data/elitza.db` | Session database for the installed copy |
-| `~/.elitza/.env` | Provider keys (`XIAOMI_API_KEY`, `GOOGLE_MAPS_API_KEY`, `RESEND_API_KEY`, `MATON_API_KEY`), mode 600, loaded by the launcher |
-| `./elitza.json`, `./.elitza/` | Per project configuration |
+| `~/.ai-enablement-agent/agent` | The installed release (binary + brain plugin) |
+| `~/.ai-enablement-agent/brain/soul_v2.db` | Memories, links, recall log, session log, tasks |
+| `~/.ai-enablement-agent/brain/crm.db` | Clients, interactions, assets, outreach pipeline |
+| `~/.ai-enablement-agent/brain/procedural/` | Playbooks (curated and auto-generated), one markdown each |
+| `~/.ai-enablement-agent/pipeline/<date>/` | Outreach drafts waiting for your batch approval |
+| `~/.ai-enablement-agent/SOUL.md` | Her identity. Edit to make her yours |
+| `~/.ai-enablement-agent/personas`, `roles`, `hooks` | Persona, role and hook definitions |
+| `~/.ai-enablement-agent/home/config` | Installed config (`opencode.json`) and service credential |
+| `~/.ai-enablement-agent/home/data/enablement.db` | Session database for the installed copy |
+| `~/.ai-enablement-agent/.env` | Provider keys (`XIAOMI_API_KEY`, `GOOGLE_MAPS_API_KEY`, `RESEND_API_KEY`, `MATON_API_KEY`), mode 600, loaded by the launcher |
+| `./elitza.json`, `./.ai-enablement-agent/` | Per project configuration |
 
 ## Architecture
 
@@ -330,13 +330,13 @@ The software is MIT licensed and costs nothing. Inference runs on your own Xiaom
 <details>
 <summary><b>Where does my data go?</b></summary>
 
-Nowhere but your machine. Keys, config, sessions, memory and the CRM live under `~/.elitza`. The only outbound connections are the model provider you configured, Places searches you run, Resend posts you approved, and release metadata when you install or update. There is no analytics or telemetry client in the tree.
+Nowhere but your machine. Keys, config, sessions, memory and the CRM live under `~/.ai-enablement-agent`. The only outbound connections are the model provider you configured, Places searches you run, Resend posts you approved, and release metadata when you install or update. There is no analytics or telemetry client in the tree.
 </details>
 
 <details>
 <summary><b>Will it email people without me?</b></summary>
 
-No. Every message is a file under `~/.elitza/pipeline/<date>/` first. Only drafts you approve in a batch can be sent, an unapproved row is refused with a reason, and the compliance footer (public-listing reason, opt-out) is written in before you review it.
+No. Every message is a file under `~/.ai-enablement-agent/pipeline/<date>/` first. Only drafts you approve in a batch can be sent, an unapproved row is refused with a reason, and the compliance footer (public-listing reason, opt-out) is written in before you review it.
 </details>
 
 <details>

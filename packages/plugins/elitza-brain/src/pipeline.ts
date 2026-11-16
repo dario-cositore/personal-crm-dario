@@ -27,7 +27,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { ELITZA_HOME, nowISO } from "./db.js"
+import { AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 import { soulGet, soulSet } from "./soul.js"
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:5002"
@@ -37,7 +37,7 @@ const DRAFT_QUERY_LIMIT = 25
 const DRAFTED_CAP = 1000
 const FETCH_TIMEOUT_MS = 5_000
 
-const PIPELINE_DIR = path.join(ELITZA_HOME, "pipeline")
+const PIPELINE_DIR = path.join(AI_ENABLEMENT_HOME, "pipeline")
 
 export interface Signal {
   id?: number

@@ -10,7 +10,7 @@
 import { Database } from "bun:sqlite"
 import fs from "node:fs"
 import path from "node:path"
-import { BRAIN_DIR, ELITZA_HOME, db } from "./db.js"
+import { BRAIN_DIR, AI_ENABLEMENT_HOME, db } from "./db.js"
 import { loadEngineConfig, validateConfig } from "./configview.js"
 import { ENGINE_DB, persistenceStats } from "./sessions.js"
 
@@ -61,7 +61,7 @@ function checkDatabases(): CheckResult {
     path.join(BRAIN_DIR, "soul_v2.db"),
     path.join(BRAIN_DIR, "persistence.db"),
     path.join(BRAIN_DIR, "conversations.db"),
-    path.join(ELITZA_HOME, "sessions.db"),
+    path.join(AI_ENABLEMENT_HOME, "sessions.db"),
     ENGINE_DB,
   ]
   const issues: string[] = []
@@ -159,7 +159,7 @@ function checkPlugins(): CheckResult {
 }
 
 function checkHooks(): CheckResult {
-  const hooksDir = path.join(ELITZA_HOME, "hooks")
+  const hooksDir = path.join(AI_ENABLEMENT_HOME, "hooks")
   if (!fs.existsSync(hooksDir)) {
     return { status: "warning", message: "Hooks directory missing", fix: `mkdir -p ${hooksDir}` }
   }
@@ -177,7 +177,7 @@ function checkSessions(): CheckResult {
 
 function checkDiskSpace(): CheckResult {
   try {
-    const stat = fs.statfsSync(ELITZA_HOME)
+    const stat = fs.statfsSync(AI_ENABLEMENT_HOME)
     const freeGb = (stat.bavail * stat.bsize) / 1024 ** 3
     if (freeGb < 1) {
       return {
@@ -195,7 +195,7 @@ function checkDiskSpace(): CheckResult {
 
 function checkPermissions(): CheckResult {
   const issues: string[] = []
-  for (const dir of [BRAIN_DIR, path.join(ELITZA_HOME, "logs"), path.join(BRAIN_DIR, "procedural")]) {
+  for (const dir of [BRAIN_DIR, path.join(AI_ENABLEMENT_HOME, "logs"), path.join(BRAIN_DIR, "procedural")]) {
     if (!fs.existsSync(dir)) continue
     try {
       fs.accessSync(dir, fs.constants.W_OK)
@@ -344,11 +344,11 @@ function repairDatabases(): RepairResult {
 
 function repairConfig(): RepairResult {
   const dirs = [
-    path.join(ELITZA_HOME, "hooks"),
-    path.join(ELITZA_HOME, "roles"),
-    path.join(ELITZA_HOME, "personas"),
-    path.join(ELITZA_HOME, "logs"),
-    path.join(ELITZA_HOME, "plugins"),
+    path.join(AI_ENABLEMENT_HOME, "hooks"),
+    path.join(AI_ENABLEMENT_HOME, "roles"),
+    path.join(AI_ENABLEMENT_HOME, "personas"),
+    path.join(AI_ENABLEMENT_HOME, "logs"),
+    path.join(AI_ENABLEMENT_HOME, "plugins"),
     path.join(BRAIN_DIR, "procedural"),
     path.join(BRAIN_DIR, "episodic"),
     path.join(BRAIN_DIR, "semantic"),
@@ -383,7 +383,7 @@ function repairBrain(): RepairResult {
 }
 
 function repairHooks(): RepairResult {
-  const hooksDir = path.join(ELITZA_HOME, "hooks")
+  const hooksDir = path.join(AI_ENABLEMENT_HOME, "hooks")
   const events = [
     "pre_prompt",
     "post_response",
@@ -407,7 +407,7 @@ function repairHooks(): RepairResult {
 }
 
 function repairLogs(): RepairResult {
-  const logsDir = path.join(ELITZA_HOME, "logs")
+  const logsDir = path.join(AI_ENABLEMENT_HOME, "logs")
   if (!fs.existsSync(logsDir)) return { component: "logs", success: true, message: "No logs directory", fixes: [] }
 
   const cutoff = Date.now() - 30 * 24 * 3600

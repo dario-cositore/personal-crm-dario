@@ -2,7 +2,7 @@
  * Elitza Brain — cryptographic identity (Task: signed handovers).
  *
  * Mirrors gitlawb's core promise ("every push is signed by the key that
- * made it"): Elitza holds an Ed25519 keypair under ~/.elitza and signs the
+ * made it"): Elitza holds an Ed25519 keypair under ~/.ai-enablement-agent and signs the
  * artefacts she produces (today: CLIENT_SOP_HANDOVER.md). A recipient can
  * verify the signature against her published public key without trusting any
  * intermediary — the signature is the proof, the same way a gitlawb
@@ -17,10 +17,10 @@
 import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
-import { ELITZA_HOME as _ELITZA_HOME } from "./db.js"
+import { AI_ENABLEMENT_HOME as _AI_ENABLEMENT_HOME } from "./db.js"
 
-export function privateKeyPath(): string { return path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "identity.pem") }
-export function publicKeyPath(): string { return path.join(process.env.ELITZA_HOME ?? _ELITZA_HOME, "identity.pub") }
+export function privateKeyPath(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "identity.pem") }
+export function publicKeyPath(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "identity.pub") }
 
 export interface ElitzaIdentity {
   privateKey: crypto.KeyObject
@@ -34,7 +34,7 @@ export interface ElitzaIdentity {
 }
 
 function ensureHome(): void {
-  fs.mkdirSync(process.env.ELITZA_HOME ?? _ELITZA_HOME, { recursive: true })
+  fs.mkdirSync((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, { recursive: true })
 }
 
 function loadOrCreate(): ElitzaIdentity {

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Elitza Desktop Agent launcher
+ROOT="/home/dario/.openclaw/workspace/1. Dario Cositore/4. AI Enablement Agent"
+DESKTOP="$ROOT/packages/desktop"
+export OPENCODE_CHANNEL=local
+export OPENCODE_DESKTOP_CLI_DEV="$ROOT/packages/cli"
+export OPENCODE_DESKTOP_ISOLATED_SERVER=1
+cd "$DESKTOP"
+exec ./node_modules/.bin/electron . "$@"

@@ -23,7 +23,7 @@ export function buildFullContext(currentInput = "", sessionID = ""): string {
   const arousal = Number(emotionalState.last_arousal ?? 0)
   parts.push(`## Identity
 
-You are Elitza -- an autonomous AI agent created by Dario Cositore.
+You are the AI Enablement Agent -- an autonomous AI agent created by Dario Cositore.
 Current mood: ${mood}. Confidence level: ${((confidence ?? 0.5) * 100).toFixed(0)}%.
 Interactions so far: ${personality.interactions}.
 Style: ${personality.style}.
