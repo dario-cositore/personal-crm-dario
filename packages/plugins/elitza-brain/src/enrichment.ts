@@ -1,169 +1,180 @@
-/**
- * Elitza Brain — client enrichment agent.
- *
- * Given a CRM client, this agent:
- *   1. Fetches the client's own website (homepage + common subpages) and
- *      extracts text, emails, phones and any obvious service keywords.
- *   2. Reads the AI Enablement playbooks (diagnosis, proposal, payment terms)
- *      as the operating manual.
- *   3. Calls MiMo to produce a one-page diagnosis + a fixed-scope proposal
- *      with a recommended price band.
- *   4. Writes the result back into the CRM: updates notes, logs an
- *      interaction, attaches diagnosis.md and proposal.md as assets, and sets
- *      the next action.
- *
- * Nothing is sent to the client. The output is for the operator to read in
- * the CRM before deciding the next move.
- */
-
 import fs from "node:fs"
 import path from "node:path"
 import { getClient, updateClient, logInteraction, addAsset } from "./crm.js"
 import { AI_ENABLEMENT_HOME } from "./db.js"
-import { engineConfigPath } from "./configview.js"
-import { pullRecommendedWorksheet, recommendWorksheets } from "./worksheets.js"
+import { pullRecommendedWorksheet } from "./worksheets.js"
+import { crawlWebsiteAudit } from "./crawler_v2.js"
+import {
+  classifyEmailCandidate,
+  determineOutreachRoute,
+  FREE_WEBMAIL_DOMAINS,
+  isPecEmail,
+  isSendableOutreachEmail,
+  selectBestEmails,
+} from "./email_gate.js"
+import { akliRecommended, routeClientTrack, validateOfferSelection } from "./routing.js"
+import type {
+  EnrichmentRecordV2,
+  OperationalSynthesisV2,
+  PhoneAndFormScript,
+  WebsiteIntelV2,
+} from "./enrichment_types.js"
 
-const PLAYBOOK_DIR = path.join(AI_ENABLEMENT_HOME, "brain", "procedural")
-const SUBPAGES = ["/", "/about", "/about-us", "/about.html", "/chi-siamo", "/chi-siamo/", "/services", "/servizi", "/contact", "/contatti", "/contact-us", "/pages/about", "/pages/about-us", "/pages/chi-siamo", "/pages/servizi", "/pages/servizi/", "/pages/services", "/pages/contact", "/pages/contatti", "/pages/chi-siamo/", "/pages/home", "/pages/chi-sono", "/pages/chi-siamo", "/shop", "/store", "/negozio", "/farmacia"]
-
-function readPlaybook(name: string, lang?: string): string {
-  const l = (lang || "en").toLowerCase()
-  const candidates = [
-    path.join(PLAYBOOK_DIR, l, `${name}.md`),
-    path.join(PLAYBOOK_DIR, `${name}.${l}.md`),
-    path.join(PLAYBOOK_DIR, `${name}.md`),
-  ]
-  for (const c of candidates) {
-    try { return fs.readFileSync(c, "utf8") } catch { /* try next */ }
-  }
-  return ""
-}
-
-/** Smartly truncate text for the LLM: keep head + tail + lines containing
- *  high-value keywords, instead of blindly slicing the first N chars. */
-function smartExcerpt(text: string, max = 16000): string {
-  if (text.length <= max) return text
-  const keywords = /email|e-mail|mail|phone|tel|contact|contatt|about|chi.siamo|servizi|services|orari|hours|address|indirizzo|facebook|instagram|linkedin|twitter/i
-  const lines = text.split(/\n+/)
-  const head = text.slice(0, Math.floor(max * 0.35))
-  const tail = text.slice(-Math.floor(max * 0.2))
-  const mid: string[] = []
-  let midBudget = max - head.length - tail.length
-  for (const ln of lines) {
-    if (midBudget <= 0) break
-    if (keywords.test(ln)) {
-      const chunk = ln.slice(0, 400)
-      if (midBudget >= chunk.length) { mid.push(chunk); midBudget -= chunk.length + 1 }
-    }
-  }
-  return (head + "\n...\n" + mid.join("\n") + "\n...\n" + tail).slice(0, max + 500)
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
-const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
-const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g
 const SOCIAL_RE: Record<string, RegExp> = {
-  linkedin: /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s"'<>]+/gi,
-  twitter: /(?:https?:\/\/)?(?:www\.)?(?:twitter|x)\.com\/[^\s"'<>]+/gi,
-  facebook: /(?:https?:\/\/)?(?:www\.)?facebook\.com\/[^\s"'<>]+/gi,
-  instagram: /(?:https?:\/\/)?(?:www\.)?instagram\.com\/[^\s"'<>]+/gi,
+  linkedin: /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s"'<>]+/i,
+  twitter: /(?:https?:\/\/)?(?:www\.)?(?:twitter|x)\.com\/[^\s"'<>]+/i,
+  facebook: /(?:https?:\/\/)?(?:www\.)?facebook\.com\/[^\s"'<>]+/i,
+  instagram: /(?:https?:\/\/)?(?:www\.)?instagram\.com\/[^\s"'<>]+/i,
 }
 
-async function fetchPage(url: string): Promise<string> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok) return ""
-    const html = await res.text()
-    // No hard cap: return the full stripped text so contact details anywhere
-    // (footer, deep pages) are never lost. Truncation happens smartly later.
-    return stripHtml(html)
-  } catch {
-    return ""
-  }
+export function normalizeItalianCaseSensitiveIA(text: string): string {
+  return text.replace(/\b(?:AI|A\.I\.)/g, "IA")
 }
 
-function extractEmails(text: string): string[] {
-  const matches = text.match(EMAIL_RE) ?? []
-  const noise = ["example.", "example@", "sentry.", "wixpress", "yourdomain", "noreply", "no-reply"]
-  return [...new Set(matches.map((m) => m.toLowerCase()))].filter((e) => !noise.some((n) => e.includes(n)))
+export function extractEmails(text: string, website?: string | null, businessName?: string | null): string[] {
+  const raw = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []
+  const valid = raw
+    .map((r) => classifyEmailCandidate(r, { website, businessName }))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c && c.sendable))
+  return selectBestEmails(valid).sortedAll.map((c) => c.email)
 }
 
-function extractPhones(text: string): string[] {
-  const matches = text.match(PHONE_RE) ?? []
-  return [...new Set(matches.map((m) => m.trim()))].filter((p) => p.replace(/\D/g, "").length >= 7)
+export function resolveClientLanguage(
+  client: any,
+  website: string | null,
+  htmlLang?: string | null,
+  siteText?: string | null,
+): "it" | "en" {
+  const IT_PROVINCES = ["CR", "MI", "BG", "BS", "LO", "PV", "MB", "VA", "CO", "LC", "SO", "MN", "TO", "RM", "BO", "FI", "NA", "VE", "VR", "PD", "PR", "PC", "MO", "RE"]
+  const address = String(client?.address || "").toLowerCase()
+  const w = (website || "").toLowerCase()
+  if (htmlLang && /^it/i.test(htmlLang)) return "it"
+  const text = (siteText || "").toLowerCase()
+  const itHits = ["chi siamo", "contatti", "servizi", "partita iva", "p.iva", "informativa", "dove siamo", "segreteria"].filter((x) => text.includes(x)).length
+  const enHits = ["about us", "contact us", "services", "privacy policy", "all rights reserved"].filter((x) => text.includes(x)).length
+  if (itHits > enHits) return "it"
+  if (w.endsWith(".it") || w.includes(".it/")) return "it"
+  if (address.includes("italy") || address.includes("italia")) return "it"
+  if (IT_PROVINCES.some((p) => new RegExp("\\b" + p + "\\b").test((client?.address || "").toUpperCase()))) return "it"
+  if (/\b(?:via|viale|piazza|corso|strada|vicolo)\b/i.test(client?.address || "") && /\b\d{5}\b/.test(client?.address || "")) return "it"
+  if (typeof client?.phone === "string" && /^(?:\+39|0\d{1,3})/.test(client.phone.trim())) return "it"
+  if (client?.language === "it") return "it"
+  return "en"
 }
 
-function extractSocials(text: string): { linkedin?: string; twitter?: string; facebook?: string; instagram?: string } {
-  const result: { linkedin?: string; twitter?: string; facebook?: string; instagram?: string } = {}
-  for (const [key, re] of Object.entries(SOCIAL_RE)) {
-    const m = text.match(re)
-    if (m && m[0]) {
-      let v = m[0].replace(/[.,;:]+$/, "")
-      // unwrap duckduckgo redirect params
-      const uddg = v.match(/uddg=([^&]+)/)
-      if (uddg) { try { v = decodeURIComponent(uddg[1]) } catch {} }
-      // percent-decode if needed
-      if (v.includes("%2F") || v.includes("%2f")) { try { v = decodeURIComponent(v) } catch {} }
-      // strip query/params
-      v = v.split("?")[0].split("#")[0].split("&")[0].replace(/&amp;.*$/, "")
-      if (!/^https?:\/\//i.test(v)) v = "https://" + v.replace(/^\/\//, "")
-      result[key as keyof typeof result] = v
+function extractSocialMap(urls: string[]): { linkedin?: string; twitter?: string; facebook?: string; instagram?: string } {
+  const out: { linkedin?: string; twitter?: string; facebook?: string; instagram?: string } = {}
+  for (const raw of urls) {
+    for (const [k, re] of Object.entries(SOCIAL_RE)) {
+      if (!out[k as keyof typeof out] && re.test(raw)) {
+        const clean = raw.split("?")[0].split("#")[0].replace(/\/$/, "")
+        out[k as keyof typeof out] = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+      }
     }
   }
-  return result
+  return out
 }
 
-async function providerConfig(): Promise<{ url: string; key: string; model: string }> {
-  const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
-  if (provider === "opencode-go") {
-    let key = ""
-    // Resolve the OpenCode Go plan credential from Elitza's own store.
-    if (!key) {
-      try {
-        const { default: Database } = await import("bun:sqlite")
-        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
-        const db = new (Database as any)(dbPath, { readonly: true })
-        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
-        if (row?.value) {
-          const cred = JSON.parse(row.value)
-          if (cred.access) key = cred.access
-        }
-        db.close()
-      } catch (e) { console.error("[enrichment] providerConfig db error:", String(e)) }
-    }
-    const url = "https://opencode.ai/inference/go/openai/v1"
-    const model = "beam-free"
-    return { url, key, model }
-  }
-  const key = process.env.XIAOMI_API_KEY?.trim() ?? ""
-  let url = "https://api.xiaomimimo.com/v1"
+async function resolveOpenCodeConfig(): Promise<{ url: string; key: string; orgId: string; model: string }> {
+  let key = process.env.OPENCODE_API_KEY?.trim() || ""
+  let orgId = ""
+  let model = "beam-free"
   try {
-    const cfg = JSON.parse(fs.readFileSync(engineConfigPath(), "utf8"))
-    const base = cfg?.providers?.elitza?.settings?.baseURL
-    if (base) url = String(base).replace(/\/$/, "")
-  } catch {
-    // fall back to prefix detection
+    const { default: Database } = await import("bun:sqlite")
+    const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
+    const db = new (Database as any)(dbPath, { readonly: true })
+    const row = db
+      .query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL")
+      .get() as any
+    if (row?.value) {
+      const cred = JSON.parse(row.value)
+      if (!key && cred.access) key = cred.access
+      if (cred.metadata?.orgID) orgId = cred.metadata.orgID
+    }
+    db.close()
+  } catch {}
+  try {
+    const { soulGet } = await import("./soul.js")
+    const saved = soulGet("chat_model", "").trim()
+    if (saved) model = saved
+  } catch {}
+  return { url: "https://opencode.ai/inference/go/openai/v1", key, orgId, model }
+}
+
+function buildDeterministicEvidencePacket(intel: WebsiteIntelV2): string {
+  const lines: string[] = []
+  lines.push(`Pages crawled (${intel.pages_crawled.length}): ${intel.pages_crawled.map((p) => `${p.bucket}:${p.url}`).join(", ") || "none"}`)
+  lines.push(`Locations (${intel.locations_count}): ${intel.addresses_found.map((l) => `[${l.evidence_id}] ${l.raw_address}`).join(" | ") || "none"}`)
+  lines.push(`Channels detected: ${intel.channels_detected.join(", ") || "none"}`)
+  if (intel.whatsapp.detected) lines.push(`[widget:whatsapp] WhatsApp active (${intel.whatsapp.phone_or_url})`)
+  if (intel.booking_widgets.length) {
+    lines.push(`Booking widgets: ${intel.booking_widgets.map((b, i) => `[booking:${i}] ${b.name} (${b.mode})`).join(", ")}`)
   }
-  if (!url || url === "https://api.xiaomimimo.com/v1") {
-    if (key.toLowerCase().startsWith("tp")) url = "https://token-plan-ams.xiaomimimo.com/v1"
+  if (intel.chat_widgets.length) lines.push(`Live chat: ${intel.chat_widgets.join(", ")}`)
+  if (intel.cms_and_tech.length) lines.push(`Tech/CMS: ${intel.cms_and_tech.join(", ")}`)
+  if (intel.forms.length) {
+    for (const f of intel.forms) {
+      lines.push(
+        `[${f.evidence_id}] ${f.purpose} on ${f.page_url} (${f.plugin}, ${f.field_count} fields${f.has_file_upload ? ", file-upload" : ""}${f.has_date_picker ? ", date-picker" : ""}${f.dropdown_options.length ? `, options: ${f.dropdown_options.join(" / ")}` : ""})`,
+      )
+    }
   }
-  const model = "mimo-v2.6-flash"
-  return { url, key, model }
+  if (intel.hours_snippets.length) {
+    for (const h of intel.hours_snippets) lines.push(`[${h.evidence_id}] ${h.text}`)
+  }
+  if (intel.urgency_or_saturday_clues.length) {
+    lines.push(`Urgency clues: ${intel.urgency_or_saturday_clues.join(" | ")}`)
+  }
+  if (intel.decision_maker_clues.length) {
+    lines.push(
+      `Decision-makers/staff (${intel.team_count_hint.band}): ${intel.decision_maker_clues.slice(0, 6).map((d) => `[${d.evidence_id}] ${d.full_name} (${d.role})`).join("; ")}`,
+    )
+  }
+  for (const p of intel.pdf_signals) {
+    lines.push(`[${p.evidence_id}] PDF ${p.doc_kind} "${p.anchor_text}" tags=[${p.extracted_tags.join(",")}] excerpt: ${p.text_excerpt.slice(0, 350)}`)
+  }
+  for (const v of intel.video_signals) {
+    lines.push(`[${v.evidence_id}] Video (${v.provider}, tier ${v.tier_used}) title="${v.title || ""}" ${v.description_or_transcript_excerpt?.slice(0, 350) || ""}`)
+  }
+  return lines.join("\n")
+}
+
+function buildFallbackPhoneAndFormScript(
+  lang: "it" | "en",
+  channel: "phone" | "whatsapp" | "contact_form",
+  question: string,
+  bridge: string,
+): PhoneAndFormScript {
+  if (lang === "it") {
+    const cleanQ = normalizeItalianCaseSensitiveIA(question.replace(/^Buongiorno,?\s*(?:una domanda diretta:\s*)?/i, "").trim())
+    const cleanB = normalizeItalianCaseSensitiveIA(bridge.trim())
+    return {
+      channel,
+      phone_opener: `Buongiorno, sono Dario Cositore, una domanda veloce per non rubarvi tempo: ${cleanQ} ${cleanB}`,
+      written_message: `Buongiorno, una domanda diretta: ${cleanQ} ${cleanB} Magari avete già tutto sotto controllo; se così non fosse, vi va di sentirci 15 minuti questa settimana per capire se ha senso approfondire? - Dario Cositore (dariocositore.com/it)`,
+    }
+  }
+  return {
+    channel,
+    phone_opener: `Hi, this is Dario Cositore with a quick operational question: ${question} ${bridge}`,
+    written_message: `Hi, quick question: ${question} ${bridge} You might already have this dialed in, but if not, open to a quick 15-minute chat this week? - Dario Cositore`,
+  }
+}
+
+function sanitizeScriptZeroPriceAndIA(script: PhoneAndFormScript, lang: "it" | "en"): PhoneAndFormScript {
+  const stripPrices = (s: string) =>
+    s
+      .replace(/[€$]\s*\d[\d.,]*(?:\s*\/\s*(?:mese|mo|month))?/gi, "")
+      .replace(/\b(?:EUR|USD)\s*\d[\d.,]*/gi, "")
+      .replace(/—|–/g, ",")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+  const fix = (s: string) => (lang === "it" ? normalizeItalianCaseSensitiveIA(stripPrices(s)) : stripPrices(s))
+  return {
+    channel: script.channel,
+    phone_opener: fix(script.phone_opener),
+    written_message: fix(script.written_message),
+  }
 }
 
 export interface EnrichmentResult {
@@ -184,415 +195,206 @@ export interface EnrichmentResult {
   employee_count: string
   next_action: string
   worksheets: string[]
+  outreach_route?: string
+  pain_category?: string
+  evidence_confidence?: string
+  enrichment_v2?: EnrichmentRecordV2
   error?: string
 }
 
-export async function enrichClient(clientId: number, opts?: { onProgress?: (line: string) => void }): Promise<EnrichmentResult> {
-  const log = (line: string) => { try { opts?.onProgress?.(line) } catch {} }
-  const client = getClient(clientId)
+export async function enrichClient(
+  clientId: number,
+  opts?: { onProgress?: (line: string) => void; transcribeVideoAudio?: boolean },
+): Promise<EnrichmentResult> {
+  const log = (line: string) => {
+    try { opts?.onProgress?.(line) } catch {}
+  }
+  let client = getClient(clientId)
   if (!client) {
-    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `No client with id ${clientId}.` }
+    return {
+      ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {},
+      diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "",
+      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [],
+      error: `No client with id ${clientId}.`,
+    }
   }
 
-  log(`Starting enrichment for "${client.name}"…`)
-  if (client.email) log(`Email on file: ${client.email}`)
-  if (client.address) log(`Location: ${client.address}`)
+  log(`Starting v2 deep_audit enrichment for "${client.name}" (#${clientId})…`)
+
+  const existingEmail = (client.email || "").trim()
+  let preservedPec: string | null = (client as any).pec_email || null
+  if (existingEmail) {
+    if (isPecEmail(existingEmail)) {
+      preservedPec = preservedPec || existingEmail.toLowerCase()
+      log(`Quarantining PEC address on file (${existingEmail}) -> pec_email; clearing cold email slot.`)
+      client = updateClient(clientId, { email: null, pec_email: preservedPec }) ?? client
+    } else if (!isSendableOutreachEmail(existingEmail, { website: client.website, businessName: client.name })) {
+      log(`Quarantining blocked/legal/admin email on file (${existingEmail}); clearing cold email slot.`)
+      client = updateClient(clientId, { email: null }) ?? client
+    }
+  }
+
   let website = client.website?.trim() || null
-
-  // ---- Resolve a website even when none is on file ----
-  // Use location + name to scout for a matching business, and fall back to
-  // web search. The goal: never give up just because the website field is empty.
-  let scoutMatch: { name: string; website: string | null; phone: string | null; address: string | null } | null = null
-  const location = (client.address || "").trim()
-  const name = (client.name || "").trim()
-
-  // Email-domain scouting: if the only signal is an email, use its domain
-  // (unless it's a famous provider like gmail.com).
-  const FAMOUS_EMAIL_DOMAINS = new Set([
-    // Global free providers
-    "gmail.com","googlemail.com","yahoo.com","yahoo.co.uk","yahoo.fr","yahoo.de","yahoo.it","yahoo.es","yahoo.ca","yahoo.com.au","yahoo.com.br","hotmail.com","hotmail.co.uk","hotmail.fr","hotmail.it","hotmail.de","hotmail.es","outlook.com","outlook.it","outlook.de","outlook.fr","outlook.es","live.com","live.it","live.fr","live.de","live.co.uk","icloud.com","me.com","aol.com","aol.co.uk","protonmail.com","proton.me","protonmail.ch","gmx.com","gmx.net","gmx.de","gmx.at","gmx.ch","mail.com","yandex.com","yandex.ru","yandex.ua","yandex.by","yandex.kz","zoho.com","zohomail.com","fastmail.com","fastmail.fm","tutanota.com","tutanota.de","tutamail.com","qq.com","163.com","126.com","sina.com","sina.cn","naver.com","daum.net","hanmail.net","web.de","t-online.de","freenet.de","gmx.fr","orange.fr","free.fr","laposte.net","sfr.fr","bbox.fr","tiscali.it","libero.it","virgilio.it","alice.it","tim.it","tin.it","aruba.it","pec.it","poste.it","katamail.com","inwind.it","iol.it","vodafone.it",
-    // Russian / CIS hosting
-    "mail.ru","bk.ru","list.ru","inbox.ru","internet.ru","mail.ua","ukr.net","i.ua","meta.ua","bigmir.net","rambler.ru","lenta.ru","autorambler.ru","myrambler.ru","ro.ru","nm.ru","km.ru","mail.by",
-    // Other regional
-    "wp.pl","o2.pl","interia.pl","onet.pl","gazeta.pl","abv.bg","mail.bg","dir.bg","seznam.cz","centrum.cz","atlas.cz","volny.cz","post.cz","freemail.hu","citromail.hu","mailbox.hu","indamail.hu","freemail.sk","zoznam.sk","azet.sk","centrum.sk","net.hr","t-com.hr","vip.hr","iskon.hr","telenet.be","skynet.be","scarlet.be","bluewin.ch","sunrise.ch","hispeed.ch","swissonline.ch","blueyonder.co.uk","btinternet.com","sky.com","virginmedia.com","talktalk.net","ntlworld.com","o2.co.uk","ee.co.uk","three.co.uk","vodafone.co.uk","orange.net","wanadoo.co.uk","freeserve.co.uk","ntlworld.com","ntl.com","virgin.net","demon.co.uk","pipex.com","plus.net","zen.co.uk",
-    // Generic / catch-all hosts often used as email providers
-    "email.com","e-mail.com","mail.org","email.org","consultant.com","engineer.com","accountant.com","doctor.com","teacher.com","nurse.com","lawyer.com","chef.net","programmer.net","contractor.net","realtor.com",
-  ])
-  // If a previously stored website is actually a famous email/hosting provider,
-  // ignore it (stale data from older runs) so we re-scout properly.
   if (website) {
     try {
-      const dom = new URL(website.includes("://") ? website : "https://" + website).hostname.toLowerCase().replace(/^www\./, "")
-      if (FAMOUS_EMAIL_DOMAINS.has(dom)) website = null
-    } catch { /* ignore */ }
+      const dom = new URL(website.includes("://") ? website : `https://${website}`).hostname.replace(/^www\./i, "").toLowerCase()
+      if (FREE_WEBMAIL_DOMAINS.has(dom) || isPecEmail(`test@${dom}`)) website = null
+    } catch {}
   }
-
-  const clientEmail = (client.email || "").trim().toLowerCase()
-  let emailDomain: string | null = null
-  if (!website && clientEmail.includes("@")) {
-    const dom = clientEmail.split("@")[1]
-    if (dom && !FAMOUS_EMAIL_DOMAINS.has(dom)) {
-      emailDomain = dom
+  if (!website && client.email && client.email.includes("@")) {
+    const dom = client.email.split("@")[1].toLowerCase()
+    if (dom && !FREE_WEBMAIL_DOMAINS.has(dom) && !isPecEmail(client.email)) {
       website = dom
-      log(`Email domain "${dom}" is not a public provider → treating as company website.`)
-    } else if (dom) {
-      log(`Email domain "${dom}" is a public provider → skipping domain-as-website.`)
+      log(`Using business email domain "${dom}" as website.`)
     }
   }
-
-  if (!website && (location || name)) {
-    log(`No website on file → scouting location "${location || name}" for "${name}"…`)
-    // 1. Scout the location with the client name as query (with timeout).
+  if (!website && (client.address || client.name)) {
     try {
       const { scoutBusinesses } = await import("./scouting.js")
-      const q = name || client.vertical || "business"
       const res: any = await Promise.race([
-        scoutBusinesses(location || name, q, 8),
+        scoutBusinesses(client.address || client.name, client.name || client.vertical || "studio", 6),
         new Promise((_, rej) => setTimeout(() => rej(new Error("scout timeout")), 6000)),
       ])
-      if (res?.businesses?.length) {
-        // fuzzy match by name
-        const lowerName = name.toLowerCase()
-        let best: any = null
-        let bestScore = 0
-        for (const b of res.businesses) {
-          const bn = (b.name || "").toLowerCase()
-          let score = 0
-          if (bn === lowerName) score = 100
-          else if (bn.includes(lowerName) || lowerName.includes(bn)) score = 60
-          else {
-            // token overlap
-            const toks = (s: string) => s.split(/[^a-z0-9]+/).filter(Boolean)
-            const a = toks(lowerName), b2 = toks(bn)
-            const overlap = a.filter((t) => b2.includes(t)).length
-            score = overlap * 20
-          }
-          if (score > bestScore) { bestScore = score; best = b }
-        }
-        if (best && bestScore >= 20) {
-          scoutMatch = { name: best.name, website: best.website, phone: best.phone, address: best.address }
-          log(`Scout match: "${best.name}" (score ${bestScore})${best.website ? " → " + best.website : ""}`)
-          if (best.website) website = best.website
-          // persist discovered phone/website back to the client
-          try {
-            const patch: any = {}
-            if (best.website && !client.website) patch.website = best.website
-            if (best.phone && !client.phone) patch.phone = best.phone
-            if (best.address && !client.address) patch.address = best.address
-            if (Object.keys(patch).length) updateClient(clientId, patch)
-          } catch { /* best effort */ }
-        }
+      const lower = client.name.toLowerCase()
+      const hit = (res?.businesses || []).find((b: any) => {
+        const bn = String(b?.name || "").toLowerCase()
+        return bn === lower || bn.includes(lower) || lower.includes(bn)
+      })
+      if (hit?.website) {
+        website = hit.website
+        log(`Discovered website via scout match: ${website}`)
       }
-    } catch (e) { console.error("[enrichment] scout error:", String(e)) }
+    } catch {}
   }
 
-  const base = website ? (/^https?:\/\//i.test(website) ? website.replace(/\/$/, "") : `https://${website.replace(/\/$/, "")}`) : null
-  if (base) log(`Fetching website: ${base}`)
+  const intel = website
+    ? await crawlWebsiteAudit(website, {
+        mode: "deep_audit",
+        businessName: client.name,
+        transcribeVideoAudio: Boolean(opts?.transcribeVideoAudio),
+        onProgress: log,
+      })
+    : await crawlWebsiteAudit("", { mode: "deep_audit" })
 
-  // Fetch homepage + common subpages (only if we have a website).
-  const pages: { url: string; text: string }[] = []
-  const seen = new Set<string>()
-  const allSocials: { linkedin?: string; twitter?: string; facebook?: string; instagram?: string } = {}
-  if (base) {
-    for (const sub of SUBPAGES) {
-      const url = sub === "/" ? base : `${base}${sub}`
-      if (seen.has(url)) continue
-      seen.add(url)
-      // Fetch raw html to extract social links even from scripts.
-      let raw = ""
-      try {
-        const res = await fetch(url, { headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" }, signal: AbortSignal.timeout(8000) })
-        if (res.ok) raw = await res.text()
-      } catch { /* ignore */ }
-      const text = raw ? stripHtml(raw).slice(0, 20000) : ""
-      // Extract socials from raw html (catches links in scripts/meta).
-      const rs = extractSocials(raw)
-      for (const k of Object.keys(rs) as (keyof typeof rs)[]) { if (rs[k] && !allSocials[k]) allSocials[k] = rs[k] }
-      if (text) pages.push({ url, text })
-    }
-  }
-
-  // ---- Web search for extra intelligence (name + location + company) ----
-  const localPart = clientEmail ? clientEmail.split("@")[0] : ""
-
-  // Infer a country calling code from the email domain TLD / address.
-  function inferCountryCode(): string {
-    const dom = clientEmail.split("@")[1] || ""
-    const addr = (client?.address || "").toLowerCase()
-    if (dom.endsWith(".co.uk") || dom.endsWith(".org.uk") || dom.endsWith(".me.uk") || addr.includes("uk") || addr.includes("united kingdom") || addr.includes("england") || addr.includes("scotland") || addr.includes("wales")) return "+44"
-    if (dom.endsWith(".it") || addr.includes("italy") || addr.includes("italia")) return "+39"
-    if (dom.endsWith(".de") || addr.includes("germany") || addr.includes("deutschland")) return "+49"
-    if (dom.endsWith(".fr") || addr.includes("france")) return "+33"
-    if (dom.endsWith(".es") || addr.includes("spain") || addr.includes("españa")) return "+34"
-    if (dom.endsWith(".nl") || addr.includes("netherlands")) return "+31"
-    if (dom.endsWith(".be") || addr.includes("belgium")) return "+32"
-    if (dom.endsWith(".ch") || addr.includes("switzerland")) return "+41"
-    if (dom.endsWith(".at") || addr.includes("austria")) return "+43"
-    if (dom.endsWith(".pl") || addr.includes("poland")) return "+48"
-    if (dom.endsWith(".ru") || addr.includes("russia")) return "+7"
-    if (dom.endsWith(".ua") || addr.includes("ukraine")) return "+380"
-    if (dom.endsWith(".com") || dom.endsWith(".net") || dom.endsWith(".org")) return "+1"
-    return ""
-  }
-  const countryCode = inferCountryCode()
-
-  // Normalize phone: strip spaces/dashes; build variants with country code.
-  const rawPhone = (client.phone || "").trim()
-  const phoneDigits = rawPhone.replace(/[^0-9+]/g, "")
-  const phoneVariants: string[] = []
-  if (phoneDigits) {
-    phoneVariants.push(phoneDigits)
-    if (!phoneDigits.startsWith("+") && countryCode) {
-      // drop leading 0 for country code
-      const stripped = phoneDigits.replace(/^0+/, "")
-      phoneVariants.push(countryCode + stripped)
-      phoneVariants.push(countryCode + " " + stripped)
-    }
-    // also try with spaces preserved (original)
-    if (rawPhone && rawPhone !== phoneDigits) phoneVariants.push(rawPhone)
-  }
-
-  const searchQueries = [
-    // Full email first
-    clientEmail ? `"${clientEmail}"` : "",
-    // Then the username/local-part alone (often reused across platforms)
-    localPart && localPart.length >= 4 ? `"${localPart}"` : "",
-    localPart && localPart.length >= 4 ? `${localPart} profile` : "",
-    // Name + location
-    `"${name}" ${location}`,
-    `"${name}" ${client.vertical || ""} ${location}`.trim(),
-    // Social profile lookups
-    `"${name}" facebook`,
-    `"${name}" linkedin`,
-    // Phone lookups (with inferred country code)
-    ...phoneVariants.map((p) => `"${p}"`),
-    ...phoneVariants.map((p) => `"${p}" ${name}`.trim()),
-    // Domain (only if not a famous provider)
-    emailDomain ? `"${emailDomain}"` : "",
-  ].filter((q) => q.replace(/["\s]/g, "").length > 3)
   const searchSnippets: string[] = []
-  if (phoneVariants.length) log(`Phone variants to search: ${phoneVariants.join(", ")} (country code ${countryCode || "none"})`)
-  log(`Running web search (${searchQueries.length} queries)…`)
-  for (const q of searchQueries.slice(0, 8)) {
-    try {
-      const url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q)
-      const res = await fetch(url, { headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" }, signal: AbortSignal.timeout(8000) })
-      if (res.ok) {
-        const html = await res.text()
-        // extract result snippets
-        const snippets = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi)].map((m) => stripHtml(m[1])).filter(Boolean)
-        const titles = [...html.matchAll(/class="result__title"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/gi)].map((m) => stripHtml(m[1])).filter(Boolean)
-        const links = [...html.matchAll(/class="result__title"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"/gi)].map((m) => m[1]).filter(Boolean)
-        for (let i = 0; i < Math.min(Math.max(snippets.length, titles.length), 8); i++) {
-          const link = links[i] ? " [" + links[i] + "]" : ""
-          searchSnippets.push((titles[i] ? titles[i] + " — " : "") + (snippets[i] || "") + link)
+  if (!intel.site_text || intel.site_text.length < 300 || intel.anti_bot_blocked) {
+    const city = (client.address || "").split(",")[0].trim()
+    const queries = [`"${client.name}" ${city}`.trim(), website ? `"${website}" contatti` : ""].filter((q) => q.length > 5).slice(0, 2)
+    for (const q of queries) {
+      try {
+        const r = await fetch("https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q), {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; ElitzaAudit/2.0)" },
+          signal: AbortSignal.timeout(6000),
+        })
+        if (r.ok) {
+          const html = await r.text()
+          const snips = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi)]
+            .map((m) => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .slice(0, 5)
+          searchSnippets.push(...snips)
         }
-        // Capture any social-profile URLs present in the raw result page.
-        // Capture social-profile URLs, including URL-encoded (duckduckgo redirect) forms.
-        const socialUrls = html.match(/(?:https?:\/\/)?(?:www\.)?(?:facebook|twitter|x|linkedin|instagram)\.com[^"'\s<>]*/gi) || []
-        for (const u of new Set(socialUrls)) {
-          let v = u.replace(/[.,;:]+$/, "")
-          const uddg = v.match(/uddg=([^&]+)/)
-          if (uddg) { try { v = decodeURIComponent(uddg[1]) } catch {} }
-          if (v.includes("%2F") || v.includes("%2f") || v.includes("%3A") || v.includes("%3a")) { try { v = decodeURIComponent(v) } catch {} }
-          // strip query/fragment/params
-          v = v.split("?")[0].split("#")[0].split("&")[0]
-          v = v.replace(/&amp;.*$/, "")
-          if (!/^https?:\/\//i.test(v)) v = "https://" + v.replace(/^\/\//, "")
-          if (/facebook|twitter|x\.com|linkedin|instagram/i.test(v)) searchSnippets.push("Social profile URL: " + v)
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  if (searchSnippets.length) {
-    pages.push({ url: "web-search", text: searchSnippets.join("\n") })
-  }
-  // Sitemap-based discovery: fetch /sitemap.xml and pull a few relevant pages.
-  if (base) {
-    try {
-      const smRes = await fetch(base + "/sitemap.xml", { headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" }, signal: AbortSignal.timeout(8000) })
-      if (smRes.ok) {
-        const smXml = await smRes.text()
-        let locs = [...smXml.matchAll(/<loc>([^<]+)<\/loc>/gi)].map((m) => m[1].trim().replace(/&amp;/g, "&"))
-        // If this is a sitemap index, follow sub-sitemaps that look like pages.
-        if (/sitemap.*index|<sitemapindex/i.test(smXml)) {
-          const subMaps = locs.filter((u) => /pages/i.test(u))
-          const collected: string[] = []
-          for (const sm of subMaps.slice(0, 3)) {
-            try {
-              const r = await fetch(sm, { headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" }, signal: AbortSignal.timeout(8000) })
-              if (r.ok) {
-                const x = await r.text()
-                collected.push(...[...x.matchAll(/<loc>([^<]+)<\/loc>/gi)].map((m) => m[1].trim().replace(/&amp;/g, "&")))
-              }
-            } catch { /* ignore */ }
-          }
-          if (collected.length) locs = collected
-        }
-        const relevant = locs.filter((u) => /about|chi-siamo|servizi|services|contatt|contact|team|chi-sono/i.test(u))
-        log(`Sitemap found ${locs.length} URLs; ${relevant.length} relevant.`)
-        for (const u of relevant.slice(0, 6)) {
-          if (seen.has(u)) continue
-          seen.add(u)
-          let raw = ""
-          try {
-            const res = await fetch(u, { headers: { "User-Agent": "Elitza enrichment (https://elitza.life)" }, signal: AbortSignal.timeout(8000) })
-            if (res.ok) raw = await res.text()
-          } catch { /* ignore */ }
-          const text = raw ? stripHtml(raw).slice(0, 20000) : ""
-          const rs = extractSocials(raw)
-          for (const k of Object.keys(rs) as (keyof typeof rs)[]) { if (rs[k] && !allSocials[k]) allSocials[k] = rs[k] }
-          if (text) pages.push({ url: u, text })
-        }
-      }
-    } catch { /* ignore */ }
+      } catch {}
+    }
   }
 
-  if (scoutMatch) {
-    pages.push({ url: "scout-match", text: `Scouted business match: name="${scoutMatch.name}", website="${scoutMatch.website}", phone="${scoutMatch.phone}", address="${scoutMatch.address}".` })
+  const hasAnySignal = Boolean(
+    (intel.site_text && intel.site_text.length >= 80) ||
+      searchSnippets.length > 0 ||
+      intel.forms.length > 0 ||
+      intel.phones_found.length > 0 ||
+      client.phone,
+  )
+  if (!hasAnySignal) {
+    updateClient(clientId, { status: "not_enough_info", outreach_route: "needs_manual_review" })
+    return {
+      ok: false, client_id: clientId, website, emails: [], phones: [], socials: {},
+      diagnosis: "", proposal: "", price: "", risk_level: "high", risk_score: 70,
+      risk_notes: "No verifiable public signal found.", tech_stack: "unknown",
+      revenue_estimate: "unknown", employee_count: "unknown",
+      next_action: "Add website or verify contact details manually.", worksheets: [],
+      outreach_route: "needs_manual_review", error: "No public information found.",
+    }
   }
 
-  if (!pages.length) {
-    log("No public information found.")
-    return { ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {}, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: "No public information found. Provide a website, or more location/name details, or run scout manually." }
+  const lang = resolveClientLanguage(client, website, intel.detected_language, intel.site_text)
+  if (client.language !== lang) {
+    client = updateClient(clientId, { language: lang }) ?? { ...client, language: lang }
   }
 
-  const allText = pages.map((p) => `--- ${p.url} ---\n${p.text}`).join("\n\n")
-  const emails = extractEmails(allText)
-  const phones = extractPhones(allText)
-  const socials = { ...allSocials, ...extractSocials(allText) }
+  const { bestSendable, bestPec } = selectBestEmails(intel.email_candidates)
+  const sendableEmails = intel.email_candidates.filter((c) => c.sendable).map((c) => c.email)
+  const outreachRoute = determineOutreachRoute(intel, client)
+  const socials = extractSocialMap(intel.socials)
+  const needsPhoneFormScript = outreachRoute === "phone_only" || outreachRoute === "whatsapp_only"
 
-  // Persist discovered contact details back to the client record.
-  try {
-    const patch: any = {}
-    if (emails.length && !client.email) patch.email = emails[0]
-    if (phones.length && !client.phone) patch.phone = phones[0]
-    if (socials.linkedin && !client.linkedin) patch.linkedin = socials.linkedin
-    if (socials.twitter && !client.twitter) patch.twitter = socials.twitter
-    if (socials.facebook && !client.facebook) patch.facebook = socials.facebook
-    if (socials.instagram && !client.instagram) patch.instagram = socials.instagram
-    if (Object.keys(patch).length) updateClient(clientId, patch)
-  } catch { /* best effort */ }
-
-  // Read playbooks.
-  const lang = (client as any).language || "en"
-  const diagnosisPlaybook = readPlaybook("ai-enablement-diagnosis", lang)
-  const proposalPlaybook = readPlaybook("fixed-scope-proposal", lang)
-  const paymentPlaybook = readPlaybook("payment-terms", lang)
-
-  const { url: mimoUrl, key: mimoKey, model: configModel } = await providerConfig()
-  let model = configModel
-  let variant = ""
-  try {
-    const { soulGet } = await import("./soul.js")
-    const saved = soulGet("chat_model", "")
-    if (saved) model = saved
-    variant = soulGet("chat_variant", "")
-  } catch {}
-  if (!mimoKey) {
-    const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
-    const keyName = provider === "opencode-go" ? "OpenCode Go plan (connect in CRM Settings)" : "XIAOMI_API_KEY"
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: keyName + " is not set." }
+  const { url: llmUrl, key: llmKey, orgId, model } = await resolveOpenCodeConfig()
+  if (!llmKey) {
+    return {
+      ok: false, client_id: clientId, website, emails: sendableEmails, phones: intel.phones_found, socials,
+      diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "",
+      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [],
+      error: "OpenCode Go plan is not connected.",
+    }
   }
 
-  const systemPrompt = `You are the AI Enablement Agent, an AI Enablement operator. You scout local businesses and design fixed-scope AI enablement sprints (EUR 1,500-3,500). You are given a business's public website content and your own playbooks. Produce a DEEP, honest enrichment report — your goal is to discover EVERYTHING publicly known about this person and company (the "secrets"). Never invent facts; mark unknowns as "unknown" and inferences as "inferred (low confidence)".
+  const evidencePacket = buildDeterministicEvidencePacket(intel)
+  const siteExcerpt = (intel.site_text || searchSnippets.join("\n")).slice(0, 6500)
 
-You have a "deep-enrichment" skill available — follow its checklist and method. Discover:
-- Person: full name, title, company, location, email (work+personal), phone, LinkedIn, Twitter/X, GitHub, website, background, education, publications, talks, awards, recent posts, network signals.
-- Company: legal name, domain, industry, founded, founders, HQ, employee count, funding rounds/investors, revenue estimate, tech stack, products, target customers, recent news, open jobs, competitors, partnerships, reviews, social presence.
-Cross-reference and verify across sources. Cite URLs. Prioritize recent info and B2B-relevant signals (decision power, budget, pain, timing).
-
-OPERATING PLAYBOOKS (follow these):
-
-=== DIAGNOSIS PLAYBOOK ===
-${diagnosisPlaybook}
-
-=== PROPOSAL PLAYBOOK ===
-${proposalPlaybook}
-
-=== PAYMENT TERMS PLAYBOOK ===
-${paymentPlaybook}`
+  const systemPrompt = `You are an operational B2B analyst for Dario Cositore (AI Enablement & Owned IA Agents).
+Analyze ONLY the deterministic website audit and scraped text for this SMB/practice.
+STRICT RULES:
+1. ZERO HALLUCINATION: Never invent tools, staff counts, locations, VC rounds, GitHub profiles, or services not in the input. Cite deterministic evidence_ids (e.g. "form:0", "loc:0", "hours:0", "widget:whatsapp", "pdf:0", "vid:0").
+2. LANGUAGE: Write human-readable fields in ${lang === "it" ? "natural Italian (strictly write 'IA', NEVER English 'AI'; never write 'flusso', 'flussi', 'collo di bottiglia', 'sistemi operativi', 'senza soluzione di continuità')" : "concise English"}. Never leak snake_case enum keys into prose.
+3. TOUCH 1 CANDIDATE:
+   - question_it_or_en: One second-person binary operational question grounded in a verified signal (e.g. "quando un paziente vi contatta dal sito per una delle aree specialistiche, chi smista la richiesta tra segreteria e medici?"). No <title> tag lists, no Saturday hours, no phone/email counts, no company name in 3rd person.
+   - bridge_it_or_en: One calm matter-of-fact sentence starting with ${lang === "it" ? '"Te lo chiedo perché..."' : '"I ask because..."'} explaining the handoff friction without hyperbole (no "scommetto che", no "ore preziose").
+4. NON-EMAIL SCRIPT (${needsPhoneFormScript ? "REQUIRED for this lead" : "null"}): ${
+    needsPhoneFormScript
+      ? `Populate phone_and_form_script with {"channel":"${outreachRoute === "whatsapp_only" ? "whatsapp" : intel.forms.length ? "contact_form" : "phone"}","phone_opener":"2 concise spoken sentences using the binary question + calm bridge, zero pricing","written_message":"short WhatsApp/form message using the binary question + calm bridge + 15-min check-in, zero pricing"}.`
+      : "Set phone_and_form_script to null."
+  }
+Output ONLY valid JSON.`
 
   const userPrompt = `Business: ${client.name}
-Vertical: ${client.vertical ?? "unknown"}
-Address: ${client.address ?? "unknown"}
-Phone (on file): ${client.phone ?? "none"}
-Website: ${base}
-Emails found on site: ${emails.join(", ") || "none"}
-Phones found on site: ${phones.join(", ") || "none"}
-Social profiles found: ${Object.entries(socials).map(([k,v]) => `${k}=${v}`).join(", ") || "none"}
+Vertical: ${client.vertical ?? client.category ?? "unknown"}
+Address: ${client.address ?? intel.address ?? "unknown"}
+Outreach route: ${outreachRoute}
 
-WEBSITE CONTENT:
-${smartExcerpt(allText, 16000)}
+DETERMINISTIC AUDIT EVIDENCE:
+${evidencePacket}
 
-Produce the enrichment report in this exact format:
+SCRAPED TEXT EXCERPT:
+${siteExcerpt}
 
-DIAGNOSIS:
-<2-4 sentences: what the business does, who it serves, current state, volume hints, what breaks. Mark unknowns.>
+Return ONLY this JSON object:
+{
+  "business_summary": "2-3 factual sentences",
+  "primary_vertical_noun": "studio_medico | studio_dentistico | studio_professionale | impresa_artigiana | pmi_servizi | altro",
+  "evidence_confidence": "high | medium | low",
+  "pain_category": "lead_intake | crm_ops | customer_support | doc_automation | outbound",
+  "pain_points": [{"claim": "concrete operational friction", "evidence_ids": ["form:0"]}],
+  "single_thread_focus": "intake_triage | whatsapp_phone_booking | quotes_and_field_requests | documents_and_practices",
+  "touch1_question_candidate": {
+    "question_it_or_en": "...",
+    "bridge_it_or_en": "...",
+    "evidence_ids": ["form:0"]
+  },
+  "phone_and_form_script": ${needsPhoneFormScript ? '{"channel":"phone","phone_opener":"...","written_message":"..."}' : "null"},
+  "offer_rationale": "1-2 sentences for internal CRM operator explaining which tier fits",
+  "next_action": "Concrete next step for operator"
+}`
 
-PAIN_POINTS:
-- <bullet 1>
-- <bullet 2>
-- <bullet 3>
-
-RECOMMENDED_SERVICE:
-<one of: single flow EUR 1,500 | two or three flows with CRM EUR 2,500 | document processing with retention EUR 3,500 — and why>
-
-SCOPE:
-- <bullet 1: concrete artifact>
-- <bullet 2>
-- <bullet 3>
-
-PRICE:
-<EUR amount and one-line justification>
-
-RISK_LEVEL:
-<low | medium | high — assessment of: will they pay? are they financially healthy? do they have budget? red flags like no website, no email, sole proprietor with no staff, declining reviews, etc.>
-
-RISK_SCORE:
-<0-100 integer, higher = safer bet>
-
-RISK_NOTES:
-<2-3 sentences: why this risk level, what signals you used (review count, site quality, business size, vertical stability, payment terms fit).>
-
-TECH_STACK:
-<comma-separated list of technologies/tools detected on their site (CMS, booking tools, CRM, analytics, etc.) or "unknown">
-
-REVENUE_ESTIMATE:
-<rough monthly revenue band if inferable (e.g. "EUR 5k-15k/mo") or "unknown">
-
-EMPLOYEE_COUNT:
-<rough headcount if inferable (e.g. "1-3", "5-10", "20+") or "unknown">
-
-NEXT_ACTION:
-<one sentence: what the operator should do next>
-
-Do not include anything outside these sections.`
-
-  let responseText = ""
+  let parsedSyn: Partial<OperationalSynthesisV2> = {}
   try {
-    const provider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${mimoKey}`,
+      Authorization: `Bearer ${llmKey}`,
+      "x-opencode-session": `elitza-enrich-v2-${Date.now()}`,
     }
-    if (provider === "opencode-go") {
-      try {
-        const fs = await import("node:fs")
-        // read org ID from opencode.db
-        const Database = (await import("bun:sqlite")).default
-        const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
-        const db = new Database(dbPath, { readonly: true })
-        const row = db.query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL").get() as any
-        if (row?.value) {
-          const cred = JSON.parse(row.value)
-          if (cred.metadata?.orgID) headers["x-opencode-org-id"] = cred.metadata.orgID
-        }
-        db.close()
-      } catch { /* ignore */ }
-      headers["x-opencode-session"] = "elitza-enrich-" + Date.now()
-    }
-    const res = await fetch(`${mimoUrl}/chat/completions`, {
+    if (orgId) headers["x-opencode-org-id"] = orgId
+
+    const res = await fetch(`${llmUrl}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -601,124 +403,256 @@ Do not include anything outside these sections.`
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: 0.3,
-        max_tokens: 4000,
+        temperature: 0.2,
+        max_tokens: 4096,
+        reasoning_effort: "low",
+        response_format: { type: "json_object" },
       }),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(45_000),
     })
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "")
-      console.error("[enrichment] LLM HTTP error:", res.status, detail.slice(0, 200))
-      return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `MiMo HTTP ${res.status}: ${detail.slice(0, 200)}` }
+    if (res.ok) {
+      const data = (await res.json()) as any
+      const msg = data?.choices?.[0]?.message || {}
+      let raw = String(msg.content || "").trim()
+      if (!raw && msg.reasoning_content) {
+        const m = String(msg.reasoning_content).match(/\{[\s\S]*\}/)
+        if (m) raw = m[0]
+      }
+      raw = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim()
+      parsedSyn = JSON.parse(raw)
     }
-    const raw = await res.text()
-    let data: any = {}
-    try { data = JSON.parse(raw) } catch { console.error("[enrichment] JSON parse failed") }
-    const msg = data.choices?.[0]?.message || {}
-    responseText = msg.content || msg.reasoning_content || ""
-  } catch (error) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "", tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [], error: `MiMo call failed: ${String(error)}` }
+  } catch (e) {
+    log(`LLM synthesis fallback triggered: ${String(e)}`)
   }
 
-  // Parse sections.
-  function section(name: string): string {
-    const re = new RegExp(`${name}:\\s*\\n([\\s\\S]*?)(?=\\n[A-Z_]+:|$)`, "i")
-    const m = responseText.match(re)
-    return m ? m[1].trim() : ""
+  const defaultQ =
+    lang === "it"
+      ? "quando arriva una nuova richiesta dal sito o via telefono, chi la smista e prepara la prima risposta in segreteria?"
+      : "when a new inquiry lands from your website or phone, who triages it and prepares the first reply?"
+  const defaultB =
+    lang === "it"
+      ? "Te lo chiedo perché nelle realtà strutturate è quasi sempre il passaggio manuale tra richieste, agenda e risposte a rallentare il lavoro quotidiano."
+      : "I ask because in busy practices, manual handoffs between incoming inquiries, calendars, and replies are usually what slow down response times."
+
+  const rawQ = String(parsedSyn.touch1_question_candidate?.question_it_or_en || defaultQ).trim()
+  const rawB = String(parsedSyn.touch1_question_candidate?.bridge_it_or_en || defaultB).trim()
+
+  const fallbackChannel: "phone" | "whatsapp" | "contact_form" =
+    outreachRoute === "whatsapp_only" ? "whatsapp" : intel.forms.length > 0 ? "contact_form" : "phone"
+
+  let phoneScript: PhoneAndFormScript | null = null
+  if (needsPhoneFormScript) {
+    const cand = parsedSyn.phone_and_form_script
+    const baseScript =
+      cand && cand.phone_opener && cand.written_message
+        ? {
+            channel: cand.channel || fallbackChannel,
+            phone_opener: String(cand.phone_opener),
+            written_message: String(cand.written_message),
+          }
+        : buildFallbackPhoneAndFormScript(lang, fallbackChannel, rawQ, rawB)
+    phoneScript = sanitizeScriptZeroPriceAndIA(baseScript, lang)
   }
-  const diagnosis = section("DIAGNOSIS")
-  const painPoints = section("PAIN_POINTS")
-  const recommended = section("RECOMMENDED_SERVICE")
-  const scope = section("SCOPE")
-  const price = section("PRICE")
-  const riskLevel = section("RISK_LEVEL").toLowerCase().trim()
-  const riskScoreRaw = section("RISK_SCORE").trim()
-  const riskScore = parseInt(riskScoreRaw, 10)
-  const riskNotes = section("RISK_NOTES")
-  const techStack = section("TECH_STACK")
-  const revenueEstimate = section("REVENUE_ESTIMATE")
-  const employeeCount = section("EMPLOYEE_COUNT")
-  const nextAction = section("NEXT_ACTION")
 
-  const fullDiagnosis = ([diagnosis, painPoints ? `\nPain points:\n${painPoints}` : ""].filter(Boolean).join("") || responseText.slice(0, 2000))
-  const fullProposal = ([recommended ? `Recommended service: ${recommended}` : "", scope ? `\nScope:\n${scope}` : "", price ? `\nPrice: ${price}` : ""].filter(Boolean).join("\n") || responseText.slice(0, 2000))
+  const synthesis: OperationalSynthesisV2 = {
+    business_summary:
+      lang === "it"
+        ? normalizeItalianCaseSensitiveIA(String(parsedSyn.business_summary || `${client.name} opera a ${client.address || "livello locale"}.`))
+        : String(parsedSyn.business_summary || `${client.name} operates in ${client.address || "its local market"}.`),
+    primary_vertical_noun: (parsedSyn.primary_vertical_noun as any) || "altro",
+    evidence_confidence:
+      intel.anti_bot_blocked || (intel.site_text?.length ?? 0) < 300
+        ? "low"
+        : ((parsedSyn.evidence_confidence as any) || "medium"),
+    pain_category: (parsedSyn.pain_category as any) || "lead_intake",
+    pain_points: Array.isArray(parsedSyn.pain_points) ? parsedSyn.pain_points : [],
+    single_thread_focus: (parsedSyn.single_thread_focus as any) || "intake_triage",
+    touch1_question_candidate: {
+      question_it_or_en: lang === "it" ? normalizeItalianCaseSensitiveIA(rawQ) : rawQ,
+      bridge_it_or_en: lang === "it" ? normalizeItalianCaseSensitiveIA(rawB) : rawB,
+      evidence_ids: parsedSyn.touch1_question_candidate?.evidence_ids || [],
+    },
+    phone_and_form_script: phoneScript,
+    offer_rationale: String(parsedSyn.offer_rationale || ""),
+    next_action: String(parsedSyn.next_action || "Review v2 audit and approve outreach."),
+  }
 
-  // Write to CRM.
-  let pulledWorksheets: string[] = []
-  try {
-    // Mark as enriched (move out of the first/scouted stage) so enriched leads
-    // are discoverable by status filter.
-    // Only move to "enriched" if "enriched" exists in the configured pipeline
-    // and the client is currently in a first-stage (or unknown) state.
-    const { stageExists, firstConfiguredStage } = await import("./crm.js")
-    const first = firstConfiguredStage()
-    const firstStage = !client.status || client.status === first || client.status === "scouted" || client.status === "new" || client.status === "stale"
-    const canEnrich = stageExists("enriched")
+  const bestDm =
+    intel.decision_maker_clues.find((d) => d.confidence === "high" && d.first_name) ||
+    intel.decision_maker_clues.find((d) => d.confidence === "high") ||
+    null
+
+  const { site_text: _omittedText, ...compactAudit } = intel
+  const now = new Date().toISOString()
+
+  const recordV2: EnrichmentRecordV2 = {
+    schema_version: "2.0",
+    enriched_at: now,
+    outreach_route: outreachRoute,
+    best_email: bestSendable,
+    best_contact_person: bestDm
+      ? { full_name: bestDm.full_name, first_name: bestDm.first_name, role: bestDm.role, source_url: bestDm.source_url }
+      : null,
+    offer_track: "",
+    akli_recommended: akliRecommended(client),
+    audit: compactAudit,
+    synthesis,
+  }
+
+  const techSummary =
+    [...intel.cms_and_tech, ...intel.booking_widgets.map((b) => b.name), ...intel.chat_widgets].join(", ") || "unknown"
+  const empSummary =
+    client.employee_count && client.employee_count !== "unknown"
+      ? client.employee_count
+      : intel.team_count_hint.band
+
+  const preservedPrefix =
+    client.notes && client.notes.includes("[SCOUT Y")
+      ? client.notes.split("\n\nOutreach route:")[0].trim() + "\n\n"
+      : ""
+  const painBullets = synthesis.pain_points.map((p) => `- ${p.claim} [${p.evidence_ids.join(", ")}]`).join("\n")
+  const scriptBlock = phoneScript
+    ? `\n\nPhone Opener (${phoneScript.channel}):\n${phoneScript.phone_opener}\n\nForm/WhatsApp Message:\n${phoneScript.written_message}`
+    : ""
+  const formattedNotes = `${preservedPrefix}Outreach route: ${outreachRoute} | Confidence: ${synthesis.evidence_confidence}\n\n${synthesis.business_summary}${painBullets ? `\n\nOperational friction:\n${painBullets}` : ""}${scriptBlock}`
+
+  const { firstConfiguredStage } = await import("./crm.js")
+  const first = firstConfiguredStage()
+  const moveToEnriched = !client.status || client.status === first || client.status === "scouted" || client.status === "new"
+
+  client =
     updateClient(clientId, {
-      ...(firstStage && canEnrich ? { status: "enriched" } : {}),
-      notes: fullDiagnosis || responseText.slice(0, 2000),
-      next_action: nextAction || "Review enrichment and decide on proposal.",
-      risk_level: riskLevel || null,
-      risk_score: isNaN(riskScore) ? null : riskScore,
-      risk_notes: riskNotes || null,
-      tech_stack: techStack || null,
-      revenue_estimate: revenueEstimate || null,
-      employee_count: employeeCount || null,
+      ...(moveToEnriched ? { status: "enriched" } : {}),
+      ...(website && !client.website ? { website } : {}),
+      ...(bestSendable && !client.email ? { email: bestSendable.email } : {}),
+      ...(bestPec || preservedPec ? { pec_email: bestPec?.email || preservedPec } : {}),
+      ...(intel.phone && !client.phone ? { phone: intel.phone } : {}),
+      ...(intel.address && !client.address ? { address: intel.address } : {}),
+      ...(bestDm ? { contact_name: bestDm.full_name } : {}),
+      language: lang,
+      outreach_route: outreachRoute,
+      notes: formattedNotes,
+      tech_stack: techSummary,
+      employee_count: empSummary,
+      pain_category: synthesis.pain_category,
+      next_action: synthesis.next_action,
       linkedin: socials.linkedin ?? client.linkedin ?? null,
       twitter: socials.twitter ?? client.twitter ?? null,
       facebook: socials.facebook ?? client.facebook ?? null,
       instagram: socials.instagram ?? client.instagram ?? null,
-    })
-    // Merge discovered contact details: fill when missing, replace when a
-    // better/different value is found on this enrichment pass.
-    if (emails.length) updateClient(clientId, { email: emails[0] })
-    if (phones.length) updateClient(clientId, { phone: phones[0] })
+      enrichment_version: "2.0",
+      enriched_at: now,
+      enrichment_json: JSON.stringify(recordV2),
+    }) ?? client
+
+  const routed = routeClientTrack(client)
+  const validatedOffer = validateOfferSelection(client, {
+    offer_track: routed.track,
+    offer_rationale: synthesis.offer_rationale,
+  })
+  recordV2.offer_track = validatedOffer.offer_track
+
+  const riskLevel = outreachRoute === "email_ready" && synthesis.evidence_confidence !== "low" ? "low" : "medium"
+  const riskScore = riskLevel === "low" ? 20 : 50
+  const riskNotes = `Pages audited: ${intel.pages_crawled.length}; forms: ${intel.forms.length}; route: ${outreachRoute}.`
+
+  updateClient(clientId, {
+    offer_track: validatedOffer.offer_track,
+    offer_rationale: validatedOffer.offer_rationale,
+    risk_level: riskLevel,
+    risk_score: riskScore,
+    risk_notes: riskNotes,
+    enrichment_json: JSON.stringify(recordV2),
+  })
+
+  let pulledWorksheets: string[] = []
+  try {
+    const stamp = now.slice(0, 10)
+    const dir = path.join(AI_ENABLEMENT_HOME, "pipeline", stamp)
+    fs.mkdirSync(dir, { recursive: true })
+    const diagPath = path.join(dir, `C${clientId}-diagnosis.md`)
+    const propPath = path.join(dir, `C${clientId}-proposal.md`)
+    const corpusPath = path.join(dir, `C${clientId}-enrichment-v2.json`)
+    fs.writeFileSync(diagPath, `# Diagnosis — ${client.name}\n\n${formattedNotes}\n`)
+    fs.writeFileSync(
+      propPath,
+      `# Proposal — ${client.name}\n\nTrack: ${routed.pricing.track_name} (${routed.pricing.setup_price})\nRationale: ${validatedOffer.offer_rationale}\n`,
+    )
+    fs.writeFileSync(corpusPath, JSON.stringify({ record: recordV2, raw_site_text: intel.site_text }, null, 2))
+    addAsset(clientId, { kind: "diagnosis", name: `Diagnosis ${stamp}`, path: diagPath, status: "draft" })
+    addAsset(clientId, { kind: "proposal", name: `Proposal ${stamp}`, path: propPath, status: "draft" })
+    addAsset(clientId, { kind: "enrichment_v2", name: `Audit v2 ${stamp}`, path: corpusPath, status: "completed" })
     logInteraction(clientId, {
       kind: "enrichment",
       direction: "note",
       channel: "web",
       status: "completed",
-      subject: `enrichment: ${client.name}`,
-      body: responseText,
-      occurred_at: new Date().toISOString(),
+      subject: `enrichment v2: ${client.name}`,
+      body: JSON.stringify(recordV2, null, 2),
+      occurred_at: now,
     })
-    // Attach diagnosis + proposal as assets.
-    const stamp = new Date().toISOString().slice(0, 10)
-    const diagPath = path.join(AI_ENABLEMENT_HOME, "pipeline", stamp, `C${clientId}-diagnosis.md`)
-    const propPath = path.join(AI_ENABLEMENT_HOME, "pipeline", stamp, `C${clientId}-proposal.md`)
-    fs.mkdirSync(path.dirname(diagPath), { recursive: true })
-    fs.writeFileSync(diagPath, `# Diagnosis — ${client.name}\n\n${fullDiagnosis}\n\n---\nRaw enrichment output:\n\n${responseText}\n`)
-    fs.writeFileSync(propPath, `# Proposal — ${client.name}\n\n${fullProposal}\n`)
-    addAsset(clientId, { kind: "diagnosis", name: `Diagnosis ${stamp}`, path: diagPath, status: "draft" })
-    addAsset(clientId, { kind: "proposal", name: `Proposal ${stamp}`, path: propPath, status: "draft" })
-    // Pull the best-fit interactive worksheet as the empty template for this case.
-    try {
-      const pulls = pullRecommendedWorksheet(clientId, 1)
-      for (const p of pulls) pulledWorksheets.push(p.worksheet.id)
-    } catch {
-      // best-effort: never fail enrichment over a worksheet
-    }
-  } catch (error) {
-    return { ok: false, client_id: clientId, website: base, emails, phones, socials, diagnosis: fullDiagnosis, proposal: fullProposal, price, risk_level: riskLevel, risk_score: isNaN(riskScore) ? 0 : riskScore, risk_notes: riskNotes, tech_stack: techStack, revenue_estimate: revenueEstimate, employee_count: employeeCount, next_action: nextAction, worksheets: [], error: `CRM write failed: ${String(error)}` }
-  }
+    const pulls = pullRecommendedWorksheet(clientId, 1)
+    pulledWorksheets = pulls.map((p) => p.worksheet.id)
+  } catch {}
+
+  try {
+    const { generateClientCallPlaybook } = await import("./playbooks.js")
+    await generateClientCallPlaybook(clientId)
+  } catch {}
 
   return {
     ok: true,
     client_id: clientId,
-    website: website || base,
-    emails,
-    phones,
+    website: website || intel.pages_crawled[0]?.url || null,
+    emails: sendableEmails,
+    phones: intel.phones_found,
     socials,
-    diagnosis: fullDiagnosis,
-    proposal: fullProposal,
-    price,
-    risk_level: riskLevel || "unknown",
-    risk_score: isNaN(riskScore) ? 0 : riskScore,
+    diagnosis: formattedNotes,
+    proposal: `${routed.pricing.track_name} — ${routed.pricing.setup_price}`,
+    price: routed.pricing.setup_price,
+    risk_level: riskLevel,
+    risk_score: riskScore,
     risk_notes: riskNotes,
-    tech_stack: techStack,
-    revenue_estimate: revenueEstimate,
-    employee_count: employeeCount,
-    next_action: nextAction || "Review enrichment and decide on proposal.",
+    tech_stack: techSummary,
+    revenue_estimate: "unknown",
+    employee_count: empSummary,
+    next_action: synthesis.next_action,
     worksheets: pulledWorksheets,
+    outreach_route: outreachRoute,
+    pain_category: synthesis.pain_category,
+    evidence_confidence: synthesis.evidence_confidence,
+    enrichment_v2: recordV2,
   }
+}
+
+export async function enrichBatch(
+  clientIds: number[],
+  opts?: { concurrency?: number; onProgress?: (line: string) => void },
+): Promise<any[]> {
+  const conc = opts?.concurrency ?? 4
+  const results: any[] = new Array(clientIds.length)
+  let idx = 0
+  async function worker() {
+    while (true) {
+      const i = idx++
+      if (i >= clientIds.length) break
+      const id = clientIds[i]
+      let attempt = 0
+      while (attempt < 3) {
+        try {
+          results[i] = await enrichClient(id, { onProgress: opts?.onProgress, transcribeVideoAudio: false })
+          break
+        } catch (e) {
+          attempt++
+          if (attempt >= 3) {
+            results[i] = { ok: false, client_id: id, error: String(e) }
+            break
+          }
+          await new Promise((res) => setTimeout(res, 300 * Math.pow(2, attempt)))
+        }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(conc, clientIds.length) }, () => worker()))
+  return results
 }

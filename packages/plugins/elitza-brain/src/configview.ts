@@ -159,9 +159,7 @@ export function validateConfig(): string[] {
 
   if (!config.model) warnings.push("No model configured")
   // Mirrors onboarding's MIMO_MODEL — the provider entry only works with its key in the environment.
-  if (typeof config.model === "string" && config.model.startsWith("elitza/") && !process.env.XIAOMI_API_KEY) {
-    warnings.push("XIAOMI_API_KEY not set")
-  }
+  // MiMo provider removed; OpenCode Go only.
   const chatProvider = process.env.ELITZA_CHAT_PROVIDER || "opencode-go"
   if (chatProvider === "opencode-go" && !process.env.OPENCODE_API_KEY) {
     // Check if opencode console credential exists in the database.

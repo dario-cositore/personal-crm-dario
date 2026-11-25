@@ -62,6 +62,14 @@ const CURATED: VerticalPack[] = [
       { name: "trades-diagnosis", content: "# Trades Diagnosis\n\n- Lead sources and missed-call rate\n- Quoting speed and follow-up\n- Scheduling and dispatch\n- Reviews and referrals\n" },
     ],
   },
+  { name: "dentisti", description: "Cliniche & Dentisti", scout_queries: ["dentista", "clinica dentale", "studio dentistico"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Professional, trust-focused.", env_checklist: [], playbooks: [] },
+  { name: "avvocati", description: "Studi Legali", scout_queries: ["avvocato", "studio legale"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Formal, precise.", env_checklist: [], playbooks: [] },
+  { name: "commercialisti", description: "Commercialisti & Consulenti", scout_queries: ["commercialista", "consulente fiscale"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Numbers-focused.", env_checklist: [], playbooks: [] },
+  { name: "idraulici_impianti", description: "Idraulici, Elettricisti & Impianti", scout_queries: ["idraulico", "elettricista", "impianti"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Direct, practical.", env_checklist: [], playbooks: [] },
+  { name: "autofficine", description: "Autofficine & Concessionarie", scout_queries: ["autofficina", "meccanico auto", "concessionaria"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Hands-on.", env_checklist: [], playbooks: [] },
+  { name: "immobiliare", description: "Agenzie Immobiliari", scout_queries: ["agenzia immobiliare", "immobiliare"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Relationship-focused.", env_checklist: [], playbooks: [] },
+  { name: "ristorazione_hotel", description: "Ristoranti & Hotel", scout_queries: ["ristorante", "hotel", "bar"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Warm, hospitality.", env_checklist: [], playbooks: [] },
+  { name: "pmi_servizi", description: "PMI, Agenzie & Logistica", scout_queries: ["pmi", "agenzia", "logistica"], scoring_weights: { has_website: 10, has_email: 15 }, outreach_voice: "Business-focused.", env_checklist: [], playbooks: [] },
 ]
 
 function packDir(name: string): string {
@@ -109,7 +117,6 @@ export function seedVerticals(): string[] {
     if (fs.existsSync(file)) continue
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(file, JSON.stringify(pack, null, 2), { mode: 0o644 })
-    // Seed playbooks into brain procedural dir too.
     const procDir = path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "brain", "procedural")
     fs.mkdirSync(procDir, { recursive: true })
     for (const pb of pack.playbooks) {

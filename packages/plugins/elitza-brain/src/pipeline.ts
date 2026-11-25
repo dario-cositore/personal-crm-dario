@@ -29,6 +29,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 import { soulGet, soulSet } from "./soul.js"
+import { addClient, updateClient } from "./crm.js"
+import { addToPipeline } from "./outreach.js"
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:5002"
 const DEFAULT_POLL_MINUTES = 360
@@ -278,6 +280,21 @@ export async function pollPipeline(options: { force?: boolean } = {}): Promise<P
       markDrafted(id)
       seen.add(id)
       written.push(file)
+
+      // Sync into CRM: upsert lead + enroll in pipeline.
+      try {
+        const { client, created } = addClient({
+          name: signal.title || signal.content?.slice(0, 60) || `Gapfeed signal ${signal.id}`,
+          vertical: signal.vertical,
+          source: "gapfeed",
+          status: "scouted",
+          notes: `Signal #${signal.id ?? "?"}: ${signal.signal_type ?? "unknown"} | ${signal.pain_category ?? "n/a"} | ${signal.source_url ?? ""}`,
+          website: signal.source_url ?? undefined,
+        })
+        addToPipeline(client.id)
+      } catch (e) {
+        debug(`crm upsert error: ${String(e)}`)
+      }
     }
 
     const result = { fetched: signals.length, drafted: written, skipped }

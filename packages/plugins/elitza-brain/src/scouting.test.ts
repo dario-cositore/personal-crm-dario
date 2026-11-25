@@ -161,7 +161,7 @@ describe("scoutBusinesses", () => {
     process.env.PHOTON_URL = photonStub([dentistFeature, secondFeature])
     process.env.OSM_API_URL = osmApiStub((id) =>
       id === 99999
-        ? { name: "Studio Bianchi", amenity: "dentist", "addr:street": "Via Garibaldi", "addr:housenumber": "4", phone: "+39 0374 654321" }
+        ? { name: "Studio Bianchi", amenity: "dentist", "addr:street": "Via Garibaldi", "addr:housenumber": "4", phone: "+39 0374 654321", "contact:website": "https://studio-bianchi.example" }
         : dentistTags,
     )
     process.env.GOOGLE_MAPS_API_KEY = "test-key"
@@ -170,7 +170,7 @@ describe("scoutBusinesses", () => {
 
     const result = await scoutBusinesses("Castelleone, Italy", "dentisti", 2)
 
-    expect(result.meta.sources_used).toEqual(["osm"])
+    expect(result.meta.sources_used).toEqual(["google_places", "osm"])
     expect(result.businesses).toHaveLength(2)
   })
 
@@ -184,7 +184,7 @@ describe("scoutBusinesses", () => {
 
     const result = await scoutBusinesses("Castelleone, Italy", "dentisti", 5)
 
-    expect(result.meta.sources_used).toEqual(["osm", "google_places"])
+    expect(result.meta.sources_used).toEqual(["google_places", "osm"])
     expect(result.businesses).toHaveLength(1)
     expect(result.businesses[0].rating).toBe(4.7)
     expect(result.businesses[0].google_maps).toBe("https://maps.example/studio-rossi")
@@ -198,6 +198,18 @@ describe("scoutBusinesses", () => {
     expect(result.meta.sources_used).toEqual([])
   })
 
+  test("queries Google Places first when key is set", async () => {
+    process.env.MIODOTTORE_URL = miodottoreStub()
+    process.env.PHOTON_URL = photonStub([dentistFeature])
+    process.env.OVERPASS_URL = overpassStub([])
+    process.env.GOOGLE_MAPS_API_KEY = "test-key"
+    process.env.GOOGLE_PLACES_URL = placesStub([dentistPlace])
+
+    const result = await scoutBusinesses("Castelleone, Italy", "dentisti", 1)
+
+    expect(result.meta.sources_used).toEqual(["google_places"])
+  })
+
   test("returns no error when the sources simply have nothing", async () => {
     process.env.MIODOTTORE_URL = miodottoreStub()
     process.env.PHOTON_URL = photonStub([])
@@ -208,5 +220,31 @@ describe("scoutBusinesses", () => {
     expect(result.error).toBeUndefined()
     expect(result.businesses).toHaveLength(0)
     expect(result.meta.sources_used).toEqual([])
+  })
+
+  test("never falls back to anywhere or returns non-Italian businesses", async () => {
+    const foreignFeature = {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [-74.0, 40.7] },
+      properties: {
+        osm_type: "N",
+        osm_id: 99999,
+        osm_key: "office",
+        osm_value: "lawyer",
+        name: "US Law Firm",
+        city: "New York",
+        county: "New York",
+        country: "United States",
+      },
+    }
+    process.env.MIODOTTORE_URL = miodottoreStub()
+    process.env.PHOTON_URL = photonStub([foreignFeature])
+    process.env.OSM_API_URL = osmApiStub({ name: "US Law Firm", office: "lawyer" })
+    process.env.OVERPASS_URL = overpassStub([])
+
+    const result = await scoutBusinesses("Castelleone, CR", "avvocati", 10)
+
+    expect(result.businesses).toHaveLength(0)
+    expect((result.steps || []).join(" ")).not.toContain("anywhere")
   })
 })

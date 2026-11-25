@@ -16,6 +16,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { AI_ENABLEMENT_HOME as _AI_ENABLEMENT_HOME } from "./db.js"
 import { addAsset, getClient } from "./crm.js"
+import { routeClientTrack } from "./routing.js"
 import { nowISO } from "./db.js"
 
 export function templatesDir(): string { return path.join((process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) ?? _AI_ENABLEMENT_HOME, "templates") }
@@ -30,6 +31,7 @@ export interface TemplateManifest {
   name: string
   description: string
   category: string
+  scope: "client" | "internal"
   env_vars: string[]
   files: string[] // relative paths inside template dir
 }
@@ -38,6 +40,7 @@ export interface TemplateInfo {
   name: string
   description: string
   category: string
+  scope: "client" | "internal"
   env_vars: string[]
   files: string[]
 }
@@ -48,6 +51,7 @@ const CURATED: { manifest: TemplateManifest; files: Record<string, string> }[] =
       name: "lead-capture-webhook",
       description: "A tiny HTTP webhook that receives a form submission, stores it, and emails you. Deploy on the client's host.",
       category: "lead-gen",
+      scope: "client",
       env_vars: ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "NOTIFY_EMAIL", "STORAGE_PATH"],
       files: ["README.md", "webhook.py", ".env.example"],
     },
@@ -62,6 +66,7 @@ const CURATED: { manifest: TemplateManifest; files: Record<string, string> }[] =
       name: "review-request-sequence",
       description: "Three-touch email sequence asking happy customers for a review, with opt-out footer.",
       category: "reputation",
+      scope: "client",
       env_vars: ["RESEND_API_KEY", "FROM_EMAIL", "REVIEW_LINK"],
       files: ["README.md", "sequence.md"],
     },
@@ -75,6 +80,7 @@ const CURATED: { manifest: TemplateManifest; files: Record<string, string> }[] =
       name: "invoice-reminder",
       description: "Polite invoice reminder sequence: due, overdue +3, overdue +10.",
       category: "billing",
+      scope: "client",
       env_vars: ["RESEND_API_KEY", "FROM_EMAIL", "PAYMENT_LINK"],
       files: ["README.md", "sequence.md"],
     },
@@ -88,6 +94,7 @@ const CURATED: { manifest: TemplateManifest; files: Record<string, string> }[] =
       name: "backlink-outreach-pack",
       description: "Backlink acquisition SOP for dariocositore.com: expert citation, guest post, directory pitch, broken link, and unlinked-mention templates with link magnets, UTM protocol, rejection logic tree, and daily outreach routine.",
       category: "seo",
+      scope: "internal",
       env_vars: ["RESEND_API_KEY", "RESEND_FROM", "OUTREACH_SIGNATURE"],
       files: ["README.md", "templates.md", "link-magnets.md", "utm-protocol.md", "rejection-tree.md", "daily-routine.md"],
     },
@@ -119,7 +126,7 @@ export function getTemplate(name: string): TemplateInfo | null {
   if (!fs.existsSync(f)) return null
   try {
     const m = JSON.parse(fs.readFileSync(f, "utf8")) as TemplateManifest
-    return { name: m.name, description: m.description, category: m.category, env_vars: m.env_vars, files: m.files }
+    return { name: m.name, description: m.description, category: m.category, scope: (m as any).scope ?? "client", env_vars: m.env_vars, files: m.files }
   } catch {
     return null
   }
@@ -152,9 +159,10 @@ function substitute(content: string, vars: Record<string, string>): string {
   return out
 }
 
-export function instantiateTemplate(name: string, clientId: number): { dir: string; files: string[] } | null {
+export function instantiateTemplate(name: string, clientId: number, opts?: { allowInternal?: boolean }): { dir: string; files: string[] } | null {
   const info = getTemplate(name)
   if (!info) return null
+  if (info.scope === "internal" && !opts?.allowInternal) return null
   const client = getClient(clientId)
   if (!client) return null
   const manifest = JSON.parse(fs.readFileSync(path.join(templateDir(name), "template.json"), "utf8")) as TemplateManifest
@@ -162,6 +170,8 @@ export function instantiateTemplate(name: string, clientId: number): { dir: stri
   const outDir = path.join(deliverablesDir(), String(clientId), `${name}-${Date.now()}`)
   fs.mkdirSync(outDir, { recursive: true })
 
+  let trackName = "", setupPrice = "", recurringPrice = ""
+  try { const r = routeClientTrack(client); trackName = r.pricing.track_name; setupPrice = r.pricing.setup_price; recurringPrice = r.pricing.recurring_price } catch { /* best effort */ }
   const vars: Record<string, string> = {
     CLIENT_NAME: client.name,
     CLIENT_EMAIL: client.email ?? "",
@@ -170,6 +180,11 @@ export function instantiateTemplate(name: string, clientId: number): { dir: stri
     DATE: nowISO().slice(0, 10),
     PHONE: client.phone ?? "",
     WEBSITE: client.website ?? "",
+    VERTICAL: client.vertical ?? "",
+    PAIN_CATEGORY: client.pain_category ?? "",
+    TRACK_NAME: trackName,
+    SETUP_PRICE: setupPrice,
+    RECURRING_PRICE: recurringPrice,
   }
 
   const written: string[] = []
@@ -184,11 +199,13 @@ export function instantiateTemplate(name: string, clientId: number): { dir: stri
     written.push(rel)
   }
 
-  // Register as CRM asset.
-  try {
-    addAsset(clientId, { kind: "automation", name, path: outDir, status: "draft", notes: `Instantiated from template ${name}` })
-  } catch {
-    // Best effort.
+  // Register as CRM asset (skip for internal unless explicitly allowed).
+  if (info.scope !== "internal" || opts?.allowInternal) {
+    try {
+      addAsset(clientId, { kind: "automation", name, path: outDir, status: "draft", notes: `Instantiated from template ${name}` })
+    } catch {
+      // Best effort.
+    }
   }
 
   return { dir: outDir, files: written }

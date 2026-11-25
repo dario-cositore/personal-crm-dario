@@ -466,6 +466,9 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
               facebook: { type: "string", description: "Facebook page URL." },
               instagram: { type: "string", description: "Instagram profile URL." },
               language: { type: "string", description: "Client document language: 'en' or 'it'. Controls which playbooks/documents are pulled." },
+              offer_track: { type: "string", description: "Offer track: entry | track_1 | track_2 | akli." },
+              pain_category: { type: "string", description: "Pain category: lead_intake | crm_ops | customer_support | doc_automation | outbound." },
+              playbook_id: { type: "string", description: "Resolved playbook id." },
               notes: { type: "string" },
               deal_value: { type: "integer", description: "Deal value in whole euros." },
               next_action: { type: "string", description: "What has to happen next with this client." },
@@ -524,6 +527,9 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 revenue_estimate: op.revenue_estimate !== undefined ? String(op.revenue_estimate) : undefined,
                 employee_count: op.employee_count !== undefined ? String(op.employee_count) : undefined,
                 language: op.language !== undefined ? String(op.language) : undefined,
+                offer_track: op.offer_track !== undefined ? String(op.offer_track) : undefined,
+                pain_category: op.pain_category !== undefined ? String(op.pain_category) : undefined,
+                playbook_id: op.playbook_id !== undefined ? String(op.playbook_id) : undefined,
               })
               return {
                 content: `${created ? "Created" : "Already in the CRM"} ${client.id}: ${client.name} [${client.status}]`,
@@ -572,6 +578,9 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
                 "facebook",
                 "instagram",
                 "language",
+                "offer_track",
+                "pain_category",
+                "playbook_id",
               ] as const) {
                 if (key in op) {
                   patch[key] =
@@ -1689,6 +1698,87 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       execute: async (input) => {
         const ok = deleteProduct(Number(input.id))
         return { content: ok ? "Deleted" : "Not found" }
+      },
+    },
+    {
+      name: "tower_dispatch",
+      description: "Trigger a Mach 1 Tower stage for a CRM client. Events: outbound_prep, inbound_received, call_prep, call_completed, milestone_update, payment_check, job_done_paid.",
+      input: {
+        type: "object",
+        properties: {
+          client_id: { type: "integer", description: "CRM client id." },
+          event: { type: "string", description: "Tower event name." },
+          event_payload: { type: "object", description: "Optional event payload." },
+        },
+        required: ["client_id", "event"],
+      },
+      execute: async (input) => {
+        try {
+          const { dispatchToTower } = await import("./tower.js")
+          const r = await dispatchToTower(Number(input.client_id), String(input.event) as any, input.event_payload && typeof input.event_payload === "object" ? input.event_payload as Record<string, unknown> : undefined)
+          return { content: JSON.stringify(r) }
+        } catch (e) {
+          return { content: `Error: ${String(e)}` }
+        }
+      },
+    },
+    {
+      name: "case_playbook",
+      description: "List, show, seed, or resolve playbooks for a client.",
+      input: {
+        type: "object",
+        properties: {
+          operation: { type: "string", enum: ["list", "show", "seed", "resolve"], description: "Operation." },
+          id: { type: "string", description: "Playbook id (show)." },
+          client_id: { type: "integer", description: "Client id (resolve)." },
+        },
+        required: ["operation"],
+      },
+      execute: async (input) => {
+        const op = String(input.operation ?? "")
+        try {
+          if (op === "list") {
+            const { listPlaybooks } = await import("./playbooks.js")
+            return { content: JSON.stringify(listPlaybooks()) }
+          }
+          if (op === "seed") {
+            const { seedPlaybooks } = await import("./playbooks.js")
+            return { content: JSON.stringify(seedPlaybooks()) }
+          }
+          if (op === "show") {
+            const { loadPlaybook } = await import("./playbooks.js")
+            const pb = loadPlaybook(String(input.id ?? ""))
+            return { content: pb ? JSON.stringify(pb) : "not found" }
+          }
+          if (op === "resolve") {
+            const { resolvePlaybook } = await import("./playbooks.js")
+            const pb = resolvePlaybook(Number(input.client_id))
+            return { content: pb ? JSON.stringify(pb) : "not found" }
+          }
+          return { content: "unknown operation" }
+        } catch (e) {
+          return { content: `Error: ${String(e)}` }
+        }
+      },
+    },
+    {
+      name: "case_autopilot",
+      description: "Run the one-button Case Autopilot for a client.",
+      input: {
+        type: "object",
+        properties: {
+          client_id: { type: "integer", description: "CRM client id." },
+        },
+        required: ["client_id"],
+      },
+      execute: async (input) => {
+        try {
+          const { runCaseAutopilot } = await import("./autopilot.js")
+          const hud = await runCaseAutopilot(Number(input.client_id))
+          return { content: JSON.stringify(hud) }
+        } catch (e) {
+          return { content: `Error: ${String(e)}` }
+        }
       },
     },
   ]

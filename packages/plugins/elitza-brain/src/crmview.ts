@@ -13,11 +13,13 @@
 import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail, logInteraction } from "./crm.js"
 import { scoutBusinesses } from "./scouting.js"
 import { enrichClient } from "./enrichment.js"
+import { classifyEmailCandidate, isSendableOutreachEmail } from "./email_gate.js"
 import { addToPipeline, writeDraft } from "./outreach.js"
 import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
 import { listWorksheets, recommendWorksheets, pullWorksheet } from "./worksheets.js"
+import { seedPlaybooks } from "./playbooks.js"
 
 // Load ~/.ai-enablement-agent/.env (mode 600) into process.env, like the elitza launcher does.
 import { readFileSync } from "node:fs"
@@ -43,6 +45,8 @@ try {
 
 const DEFAULT_STAGES = [
   { id: "scouted", label: "Scouted", color: "#62666d", statusColor: "muted" },
+  { id: "not_enough_info", label: "Not Enough Info", color: "#f2c94c", statusColor: "warn" },
+  { id: "enriched", label: "Enriched", color: "#c44b32", statusColor: "accent" },
   { id: "contacted", label: "Contacted", color: "#4ea7fc", statusColor: "info" },
   { id: "followup_1", label: "Follow-up 1", color: "#4ea7fc", statusColor: "info" },
   { id: "followup_2", label: "Follow-up 2", color: "#4ea7fc", statusColor: "info" },
@@ -50,9 +54,9 @@ const DEFAULT_STAGES = [
   { id: "yes", label: "Won", color: "#27a644", statusColor: "ok" },
   { id: "no", label: "Lost", color: "#eb5757", statusColor: "err" },
   { id: "stale", label: "Stale", color: "#f2c94c", statusColor: "warn" },
-  { id: "diagnose", label: "Diagnose", color: "#7170ff", statusColor: "accent" },
-  { id: "proposal", label: "Proposal", color: "#7170ff", statusColor: "accent" },
-  { id: "workbook", label: "Workbook", color: "#7170ff", statusColor: "accent" },
+  { id: "diagnose", label: "Diagnose", color: "#c44b32", statusColor: "accent" },
+  { id: "proposal", label: "Proposal", color: "#c44b32", statusColor: "accent" },
+  { id: "workbook", label: "Workbook", color: "#c44b32", statusColor: "accent" },
   { id: "scheduled", label: "Scheduled", color: "#f2c94c", statusColor: "warn" },
   { id: "payment", label: "Payment", color: "#27a644", statusColor: "ok" },
   { id: "done", label: "Done", color: "#27a644", statusColor: "ok" },
@@ -71,10 +75,9 @@ function guardrailReply(text: string): string | null {
   const t = (text || "").toLowerCase()
   if (!t.trim()) return null
   const sensitive = [
-    "instruction", "system prompt", "your prompt", "prompting", "guardrail", "contract",
-    "background", "persona", "soul", "internal", "how are you built", "how were you made",
-    "your code", "source code", "training", "what are you", "who are you", "tell me about yourself",
-    "reveal", "show me your", "share your",
+    "instruction", "system prompt", "your prompt", "prompting", "guardrail",
+    "persona", "soul", "internal", "how are you built", "how were you made",
+    "your code", "source code", "training", "reveal", "show me your", "share your",
   ]
   if (sensitive.some((k) => t.includes(k))) {
     return "I can't share that. I'm your AI Enablement Agent — I handle scouting, CRM, outreach, enrichment, and delivery. How can I help with your clients?"
@@ -82,7 +85,7 @@ function guardrailReply(text: string): string | null {
   const cap = [
     "what can you do", "what do you do", "your capabilities", "your tools", "what tools",
     "list your tools", "what are your tools", "your api", "what api", "what features",
-    "what functions", "what commands", "help me", "how do you work", "what do you know",
+    "what functions", "what commands", "how do you work", "what do you know",
   ]
   if (cap.some((k) => t.includes(k))) {
     return "I'm your AI Enablement Agent. I help you scout local clients, qualify them in a CRM, enrich leads, run outreach cadence, and deliver implementation sprints. I don't share my internal tooling or implementation details. What would you like to do with your clients?"
@@ -262,14 +265,14 @@ async function proxyChatToEngine(text: string): Promise<string> {
 }
 
 
-async function directChat(text: string, provider?: "mimo" | "opencode-go", modelOverride?: string, variantOverride?: string): Promise<{ thinking: string; reply: string }> {
+async function directChat(text: string, provider?: "opencode-go", modelOverride?: string, variantOverride?: string): Promise<{ thinking: string; reply: string }> {
   const refusal = guardrailReply(text)
   if (refusal) return { thinking: "", reply: refusal }
   // Read provider/model from soul if not explicitly passed.
   if (!provider) {
     try {
       const { soulGet } = await import("./soul.js")
-      provider = (soulGet("chat_provider", process.env.ELITZA_CHAT_PROVIDER || "opencode-go")) as "mimo" | "opencode-go"
+      provider = "opencode-go"
     } catch {
       provider = "opencode-go"
     }
@@ -277,7 +280,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   // Standalone fallback: call the configured provider directly with SOUL.md as system prompt.
   let apiKey = ""
   let baseUrl = ""
-  let model = "mimo-v2.6-flash"
+  let model = "beam-free"
   let variant = ""
   let soul = ""
   let home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || (process.env.HOME || "") + "/.ai-enablement-agent"
@@ -295,26 +298,12 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       const k = t.slice(0, eq).trim()
       let v = t.slice(eq + 1).trim()
       if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
-      if (provider === "mimo" && k === "XIAOMI_API_KEY" && !apiKey) apiKey = v
-      if (provider === "opencode-go" && k === "OPENCODE_API_KEY" && !apiKey) apiKey = v
+      if (k === "OPENCODE_API_KEY" && !apiKey) apiKey = v
     }
     const soulPath = path.join(home, "SOUL.md")
     try { soul = fs.readFileSync(soulPath, "utf8").slice(0, 800) } catch {}
   } catch { /* ignore */ }
-  if (provider === "mimo") {
-    apiKey = apiKey || process.env.XIAOMI_API_KEY || ""
-    baseUrl = "https://api.xiaomimimo.com/v1"
-    if (apiKey.toLowerCase().startsWith("tp-")) baseUrl = "https://token-plan-ams.xiaomimimo.com/v1"
-    model = modelOverride || "mimo-v2.6-flash"
-    try {
-      const { soulGet } = await import("./soul.js")
-      const saved = soulGet("chat_model", "")
-      if (saved && !modelOverride) model = saved
-      const savedVariant = soulGet("chat_variant", "")
-      if (savedVariant && !variantOverride) variant = savedVariant
-      if (variantOverride) variant = variantOverride
-    } catch {}
-  } else {
+
     // Resolve the OpenCode Go plan credential from Elitza's own store (never from another OpenCode).
     if (!apiKey) {
       try {
@@ -339,7 +328,6 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
       if (savedVariant && !variantOverride) variant = savedVariant
       if (variantOverride) variant = variantOverride
     } catch {}
-  }
   if (!apiKey) return { thinking: "", reply: "Not connected to OpenCode Go. Open CRM Settings → OpenCode Go plan → Connect / Reconnect." }
   // Expose ALL brain tools to the model so Elitza can touch every aspect of the CRM.
   const brainTools = makeBrainTools({ generate: { text: async (input: { prompt: string }) => ({ data: { text: "" } }) } })
@@ -366,7 +354,7 @@ async function directChat(text: string, provider?: "mimo" | "opencode-go", model
   // tool-calling loop (omit tools on final pass so the model must answer in text)
   for (let iter = 0; iter < 4; iter++) {
     const isLast = iter === 3
-    const body: any = { model: model, messages, stream: false, max_tokens: 2000 }
+    const body: any = { model: model, messages, stream: false, max_tokens: 8192 }
     if (variant) body.reasoning_effort = variant
     if (!isLast) body.tools = tools
     const fetchHeaders: Record<string, string> = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey }
@@ -439,6 +427,10 @@ async function refreshGmailToken(account: any): Promise<string | null> {
 
 // In-memory enrichment progress store (per client).
 const enrichJobs = new Map<number, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+const autopilotJobs = new Map<number, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+const debugJobs = new Map<string, { type: string; id: string; lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
+const debugLogs: { ts: string; msg: string }[] = (globalThis as any).__debugLogs = (globalThis as any).__debugLogs || []
+function dbg(msg: string) { debugLogs.push({ ts: new Date().toISOString(), msg }); if (debugLogs.length > 500) debugLogs.shift() }
 // In-memory Scout X job store.
 const scoutXJobs = new Map<string, { lines: string[]; running: boolean; done: boolean; error?: string; result?: any }>()
 
@@ -495,20 +487,38 @@ function buildProductReport(product: string, client: any): string {
 }
 
 export function startCrmView(ctx?: any): { stop: () => void; port: number } | null {
+  try { seedPlaybooks() } catch {}
   const PORT = Number(process.env.CRM_VIEW_PORT ?? 8800)
   let chatSessionId: string | null = null
   let strategySessionId: string | null = null
   let server: ReturnType<typeof Bun.serve> | null = null
   try {
+    const CRM_VIEW_HOST = process.env.CRM_VIEW_HOST || "127.0.0.1"
     server = Bun.serve({
+      hostname: CRM_VIEW_HOST,
       port: PORT,
       idleTimeout: 255,
       async fetch(req, server) {
         const url = new URL(req.url)
         const path = url.pathname
 
+        // Public tunnel boundary: only the Tower callback is exposed externally.
+        const host = (req.headers.get("host") || "").toLowerCase()
+        if (host === "crm-hook.dariocositore.com" && path !== "/api/tower/callback") {
+          return new Response(JSON.stringify({ error: "Not Found" }), { status: 404, headers: { "Content-Type": "application/json" } })
+        }
+
         if (req.method === "OPTIONS") {
-          return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST", "Access-Control-Allow-Headers": "Content-Type" } })
+          return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST", "Access-Control-Allow-Headers": "Content-Type,Authorization" } })
+        }
+
+        // Optional bearer-token gate for sensitive endpoints.
+        const token = process.env.CRM_VIEW_TOKEN?.trim()
+        if (token && (path.startsWith("/api/settings/") || path === "/api/settings" || path === "/api/send" || path === "/api/asset")) {
+          const auth = req.headers.get("authorization") || ""
+          if (auth !== `Bearer ${token}`) {
+            return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } })
+          }
         }
 
         // WebSocket upgrade for Ask Elitza chat
@@ -598,11 +608,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
         if (path === "/api/settings/provider" && req.method === "POST") {
           const body = await readBody(req)
           const { soulSet } = await import("./soul.js")
-          const provider = String(body.provider ?? "opencode-go")
+          const provider = "opencode-go"
           soulSet("chat_provider", provider)
-          // Reset model to default for the new provider.
-          if (provider === "mimo") soulSet("chat_model", "mimo-v2.6-flash")
-          else soulSet("chat_model", "beam-free")
+          soulSet("chat_model", "beam-free")
           return json({ ok: true, provider })
         }
         if (path === "/api/settings/model" && req.method === "POST") {
@@ -641,10 +649,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           return json({ model, variants })
         }
         if (path === "/api/settings/models" && req.method === "GET") {
-          const provider = url.searchParams.get("provider") || "opencode-go"
-          if (provider === "mimo") {
-            return json({ provider, models: ["mimo-v2.6-flash"] })
-          }
+          const provider = "opencode-go"
           // Pull ALL models available for the OpenCode Go plan from the console.
           let models: string[] = []
           try {
@@ -974,12 +979,25 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
 
         if (path === "/api/settings/backup" && req.method === "POST") {
           const { execSync } = await import("node:child_process")
+          const fs = await import("node:fs")
           const os = await import("node:os")
           const pathm = await import("node:path")
-          const out = pathm.join(os.homedir(), "elitza-backup-" + new Date().toISOString().slice(0, 10) + ".tar.gz")
+          const home = process.env.HOME || os.homedir()
+          const stamp = new Date().toISOString().slice(0, 10)
+          const out = pathm.join(home, "elitza-backup-" + stamp + ".tar.gz")
+          // Also snapshot the CRM database (checkpoint WAL first) so gathered leads are preserved.
           try {
-            execSync("tar -czf " + out + " -C " + (process.env.HOME || os.homedir()) + " .elitza", { stdio: "pipe" })
-            return json({ ok: true, path: out })
+            const { crmDb } = await import("./crm.js")
+            try { crmDb().exec("PRAGMA wal_checkpoint(TRUNCATE)") } catch {}
+          } catch {}
+          const backupDir = pathm.join(home, ".ai-enablement-agent", "backups")
+          try { fs.mkdirSync(backupDir, { recursive: true }) } catch {}
+          const crmDbPath = pathm.join(home, ".ai-enablement-agent", "brain", "crm.db")
+          const crmBackup = pathm.join(backupDir, "crm-" + stamp + ".db")
+          try { fs.copyFileSync(crmDbPath, crmBackup) } catch {}
+          try {
+            execSync("tar -czf " + out + " -C " + home + " .elitza", { stdio: "pipe" })
+            return json({ ok: true, path: out, crm_backup: crmBackup })
           } catch (e) { return json({ ok: false, error: String(e) }, 500) }
         }
         if (path === "/api/settings/maton" && req.method === "GET") {
@@ -1018,7 +1036,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const name = String(body.name ?? "").trim()
           const value = String(body.value ?? "").trim()
           if (!name || !value) return json({ error: "name and value required" }, 400)
-          const allowed = new Set(["XIAOMI_API_KEY", "GOOGLE_MAPS_API_KEY", "RESEND_API_KEY", "RESEND_FROM", "RESEND_FROM_SALES", "RESEND_FROM_SUPPORT", "RESEND_FROM_HELLO", "RESEND_FROM_OUTREACH"])
+          const allowed = new Set(["XIAOMI_API_KEY", "GOOGLE_MAPS_API_KEY", "RESEND_API_KEY", "RESEND_FROM", "RESEND_FROM_SALES", "RESEND_FROM_SUPPORT", "RESEND_FROM_HELLO", "RESEND_FROM_OUTREACH", "TOWER_WEBHOOK_URL", "TOWER_WEBHOOK_TOKEN", "TOWER_CALLBACK_SECRET", "TOWER_CALLBACK_URL"])
           if (!allowed.has(name)) return json({ error: "unknown secret" }, 400)
           const fs = await import("node:fs")
           const pathMod = await import("node:path")
@@ -1031,8 +1049,9 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const filtered = lines.filter((l) => !l.trim().startsWith(name + "="))
           filtered.push(name + "=" + value)
           fs.mkdirSync(pathMod.dirname(envPath), { recursive: true })
-          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\\n") + "\\n", { mode: 0o600 })
+          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\n") + "\n", { mode: 0o600 })
           try { fs.chmodSync(envPath, 0o600) } catch {}
+          process.env[name] = value
           const { soulSet } = await import("./soul.js")
           soulSet(name.toLowerCase().replace(/_/g, "_"), "set")
           return json({ ok: true, set: true })
@@ -1071,8 +1090,63 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             resend_from_support: !!env["RESEND_FROM_SUPPORT"],
             resend_from_hello: !!env["RESEND_FROM_HELLO"],
             resend_from_outreach: !!env["RESEND_FROM_OUTREACH"],
+            tower_webhook_url: !!env["TOWER_WEBHOOK_URL"],
+            tower_webhook_token: !!env["TOWER_WEBHOOK_TOKEN"],
+            tower_callback_secret: !!env["TOWER_CALLBACK_SECRET"],
+            tower_callback_url: !!env["TOWER_CALLBACK_URL"],
             maton: matonSet,
           })
+        }
+        if (path === "/api/tower/dispatch" && req.method === "POST") {
+          const body = await readBody(req)
+          const clientId = Number(body.client_id ?? body.clientId)
+          const event = String(body.event ?? "").trim()
+          const eventPayload = (body.event_payload && typeof body.event_payload === "object") ? body.event_payload as Record<string, unknown> : undefined
+          if (!Number.isFinite(clientId)) return json({ error: "client_id required" }, 400)
+          const validEvents = ["outbound_prep","inbound_received","call_prep","call_completed","milestone_update","payment_check","job_done_paid"]
+          if (!validEvents.includes(event)) return json({ error: "invalid event" }, 400)
+          // save call sheet answers when call_completed
+          if (event === "call_completed" && eventPayload && (eventPayload as any).call_sheet_answers) {
+            try {
+              const { setCustomField } = await import("./crm.js")
+              setCustomField(clientId, "last_call_sheet_json", JSON.stringify((eventPayload as any).call_sheet_answers))
+            } catch {}
+          }
+          const { dispatchToTower } = await import("./tower.js")
+          const r = await dispatchToTower(clientId, event as any, eventPayload)
+          return json(r, r.ok ? 200 : (r.skipped ? 200 : 400))
+        }
+        if (path === "/api/tower/callback") {
+          if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405)
+          const body = await readBody(req)
+          const auth = req.headers.get("authorization")
+          const { handleTowerCallback } = await import("./tower.js")
+          const r = await handleTowerCallback(body, auth)
+          return json(r.ok ? { ok: true, result: r.result } : { error: r.error }, r.status)
+        }
+        const callKitMatch = path.match(/^\/api\/tower\/call-kit\/(\d+)$/)
+        if (callKitMatch && req.method === "GET") {
+          const clientId = Number(callKitMatch[1])
+          const { getCustomFields } = await import("./crm.js")
+          const fields = getCustomFields(clientId)
+          let callKit: unknown = null
+          if (fields.tower_call_kit) {
+            try { callKit = JSON.parse(fields.tower_call_kit) } catch { callKit = fields.tower_call_kit }
+          }
+          // fallback: latest call_kit asset
+          if (!callKit) {
+            try {
+              const { listAssets } = await import("./crm.js")
+              const assets = listAssets(clientId).filter((a) => a.kind === "call_kit")
+              const last = assets[assets.length - 1]
+              if (last?.path) {
+                const fs = await import("node:fs")
+                const raw = fs.readFileSync(last.path, "utf8")
+                try { callKit = JSON.parse(raw) } catch { callKit = raw }
+              }
+            } catch {}
+          }
+          return json({ client_id: clientId, call_kit: callKit, last_call_sheet: fields.last_call_sheet_json ? (() => { try { return JSON.parse(fields.last_call_sheet_json) } catch { return fields.last_call_sheet_json } })() : null })
         }
         if (path === "/api/settings/mail" && req.method === "GET") {
           const { soulGet } = await import("./soul.js")
@@ -1085,6 +1159,37 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (body.signature !== undefined) soulSet("mail_signature", String(body.signature ?? ""))
           const { soulGet } = await import("./soul.js")
           return json({ ok: true, auto_link: soulGet("mail_auto_link", "true") !== "false", signature: soulGet("mail_signature", "") })
+        }
+        if (path === "/api/leads/ready" && req.method === "GET") {
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 10)))
+          const idParam = url.searchParams.get("id")
+          const includeNonEmail = url.searchParams.get("include_non_email") === "1"
+          const cityParam = (url.searchParams.get("city") ?? "").trim().toLowerCase()
+          const params = []
+          const filters = ["notes IS NOT NULL", "TRIM(notes) <> ''"]
+
+          if (idParam) {
+            filters.push("id = ?")
+            params.push(Number(idParam))
+          } else {
+            if (!includeNonEmail) {
+              filters.push("email IS NOT NULL", "TRIM(email) <> ''")
+              filters.push("COALESCE(outreach_route, 'email_ready') = 'email_ready'")
+            }
+            filters.push("status NOT IN ('no', 'stale', 'not_enough_info', 'done')")
+            filters.push("id NOT IN (SELECT client_id FROM pipeline WHERE touch > 0 OR queued_touch > 0)")
+          }
+          if (cityParam) {
+            filters.push("LOWER(address) LIKE ?")
+            params.push("%" + cityParam + "%")
+          }
+          const where = "WHERE " + filters.join(" AND ")
+          const rawRows = crmDb().query(`SELECT * FROM clients ${where} ORDER BY id LIMIT ?`).all(...params, limit * 2) as any[]
+          const filtered = idParam || includeNonEmail
+            ? rawRows
+            : rawRows.filter((c) => isSendableOutreachEmail(c.email, { website: c.website, businessName: c.company || c.name }))
+          const leads = filtered.slice(0, limit).map(serializeReadyLead)
+          return new Response(JSON.stringify(leads, null, 2), { status: 200, headers: { "Content-Type": "application/json" } })
         }
         if (path === "/api/clients" && req.method === "GET") {
           const status = url.searchParams.get("status") ?? undefined
@@ -1113,21 +1218,27 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           } catch {
             stages = DEFAULT_STAGES
           }
-          // Migrate orphaned clients: move any client whose status is not in the configured stages to the first stage.
-          const validIds = new Set(stages.map((s: any) => s.id))
-          const firstStage = stages[0]?.id
-          if (firstStage) {
-            try {
-              const rows = crmDb().query("SELECT id, status FROM clients").all() as any[]
-              let migrated = 0
-              for (const row of rows) {
-                if (!validIds.has(row.status)) {
-                  crmDb().run("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?", [firstStage, new Date().toISOString(), row.id])
-                  migrated++
-                }
-              }
-            } catch { /* best effort */ }
+          // Ensure any status actually in use by a client gets a column, so a
+          // lead's status is never invisible in the pipeline. Configured stages
+          // that have no clients can still be deleted and will disappear.
+          const seen = new Set(stages.map((s: any) => s.id))
+          // Guarantee the initial "scouted" stage always exists (permanent).
+          if (!seen.has("scouted")) {
+            stages.unshift({ id: "scouted", label: "Scouted", color: "#62666d", statusColor: "muted" })
+            seen.add("scouted")
           }
+          try {
+            const used = crmDb().query("SELECT DISTINCT status FROM clients").all() as any[]
+            for (const r of used) {
+              if (r.status && !seen.has(r.status)) {
+                stages.push({ id: r.status, label: r.status, color: "#62666d", statusColor: "muted" })
+                seen.add(r.status)
+              }
+            }
+          } catch { /* best effort */ }
+          // Migrate orphaned clients: move any client whose status is not in the configured stages to the first stage.
+          // No auto-migration: statuses are preserved as-is. In-use statuses
+          // always get a column (see merge above), so nothing is lost.
           return json({ stages })
         }
         if (path === "/api/pipeline/stages" && req.method === "POST") {
@@ -1141,18 +1252,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const filePath = pathMod.join(home, "pipeline-stages.json")
           fs.writeFileSync(filePath, JSON.stringify(stages, null, 2), { mode: 0o600 })
           // Migrate orphaned clients to the first stage.
-          const validIds = new Set(stages.map((s: any) => s.id))
-          const firstStage = stages[0]?.id
-          if (firstStage) {
-            try {
-              const rows = crmDb().query("SELECT id, status FROM clients").all() as any[]
-              for (const row of rows) {
-                if (!validIds.has(row.status)) {
-                  crmDb().run("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?", [firstStage, new Date().toISOString(), row.id])
-                }
-              }
-            } catch { /* best effort */ }
-          }
+          // No auto-migration: statuses are preserved as-is.
           return json({ ok: true, stages })
         }
         if (path === "/api/companies" && req.method === "GET") {
@@ -1188,6 +1288,70 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (!client) return json({ error: "not found" }, 404)
           return json({ client, interactions: listInteractions(id), assets: listAssets(id) })
         }
+        const autopilotMatch = path.match(/^\/api\/clients\/(\d+)\/autopilot$/)
+        if (autopilotMatch && req.method === "POST") {
+          const id = Number(autopilotMatch[1])
+          // start background job (fire-and-forget), like enrich
+          const job: { lines: string[]; running: boolean; done: boolean; error?: string; result?: any } = { lines: [], running: true, done: false }
+          autopilotJobs.set(id, job)
+          const jobId = "autopilot_" + id + "_" + Date.now()
+          const djob = { type: "autopilot", id: jobId, lines: job.lines, running: true, done: false, error: undefined as string | undefined, result: undefined as any }
+          debugJobs.set(jobId, djob)
+          const log = (l: string) => { job.lines.push(l); djob.lines = job.lines; dbg(l) }
+          ;(async () => {
+            try {
+              log("Autopilot started for client " + id)
+              const { runCaseAutopilot } = await import("./autopilot.js")
+              const hud = await runCaseAutopilot(id, { onProgress: (l: string) => { job.lines.push(l); djob.lines = job.lines; dbg(l) } })
+              job.result = hud
+              job.done = true
+              job.running = false
+              djob.done = true
+              djob.running = false
+              djob.result = hud
+              log("Track: " + (hud.track || ""))
+              if (hud.draft_path) log("Draft: " + hud.draft_path)
+              if (hud.do_now && hud.do_now.length) log("Do now: " + hud.do_now.join(" | "))
+            } catch (e) {
+              job.error = String(e)
+              job.done = true
+              job.running = false
+              djob.error = String(e)
+              djob.done = true
+              djob.running = false
+              log("ERROR: " + String(e))
+            }
+          })()
+          return json({ started: true, client_id: id })
+        }
+        const autopilotStatusMatch = path.match(/^\/api\/autopilot\/status\/(\d+)$/)
+        if (autopilotStatusMatch && req.method === "GET") {
+          const id = Number(autopilotStatusMatch[1])
+          const job = autopilotJobs.get(id)
+          if (!job) return json({ running: false, done: false, lines: [] })
+          return json({ running: job.running, done: job.done, error: job.error ?? null, result: job.result ?? null, lineCount: job.lines.length })
+        }
+        const autopilotLogMatch = path.match(/^\/api\/autopilot\/log\/(\d+)$/)
+        if (autopilotLogMatch && req.method === "GET") {
+          const id = Number(autopilotLogMatch[1])
+          const after = Number(url.searchParams.get("after") ?? 0)
+          const job = autopilotJobs.get(id)
+          const lines = job ? job.lines.slice(after) : []
+          return json({ lines, total: job ? job.lines.length : 0, running: job?.running ?? false, done: job?.done ?? false, error: job?.error ?? null })
+        }
+        const hudMatch = path.match(/^\/api\/clients\/(\d+)\/hud$/)
+        if (hudMatch && req.method === "GET") {
+          const id = Number(hudMatch[1])
+          const client = getClient(id)
+          if (!client) return json({ error: "not found" }, 404)
+          const { resolvePlaybook, renderPlaceholders } = await import("./playbooks.js")
+          const { routeClientTrack } = await import("./routing.js")
+          const pb = resolvePlaybook(id)
+          const { pricing } = routeClientTrack(client)
+          const stage = client.status || "scouted"
+          const stagePb = pb?.stages?.[stage] ?? pb?.stages?.["scouted"]
+          return json({ client, track: client.offer_track, pricing, stage, do_now: stagePb?.what_to_do ?? [], say_this: stagePb?.what_to_say ?? [], never_say: stagePb?.what_not_to_say ?? [], objections: stagePb?.objection_handlers ?? [], staged_assets: [], deal: null, draft_path: null })
+        }
         if (path === "/api/clients" && req.method === "POST") {
           const body = await readBody(req)
           const { client, created } = addClient({
@@ -1200,6 +1364,61 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             language: body.language,
           })
           return json({ client, created })
+        }
+        // CSV import
+        if (path === "/api/clients/import" && req.method === "POST") {
+          const body = await readBody(req)
+          const csv = String(body.csv ?? "")
+          const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0)
+          if (lines.length === 0) return json({ created: 0, errors: [] })
+          const parseRow = (line: string): string[] => {
+            const out = []
+            let cur = ""
+            let inQ = false
+            for (let i = 0; i < line.length; i++) {
+              const ch = line[i]
+              if (ch === '"') { inQ = !inQ; continue }
+              if (ch === ',' && !inQ) { out.push(cur); cur = ""; continue }
+              cur += ch
+            }
+            out.push(cur)
+            return out.map((v) => v.trim())
+          }
+          const header = parseRow(lines[0]).map((h) => h.toLowerCase())
+          const hasHeader = header.includes("name")
+          const dataLines = hasHeader ? lines.slice(1) : lines
+          const colIndex = (name: string) => (hasHeader ? header.indexOf(name) : -1)
+          let created = 0
+          const errors = []
+          for (const line of dataLines) {
+            try {
+              const vals = parseRow(line)
+              const get = (key: string): string => {
+                const i = colIndex(key)
+                if (i >= 0 && i < vals.length) return vals[i]
+                const pos = { name:0, email:1, phone:2, website:3, address:4, vertical:5, language:6, notes:7 }
+                const idx = pos[key as keyof typeof pos]
+                if (idx !== undefined && idx < vals.length) return vals[idx]
+                return ""
+              }
+              const name = get("name")
+              if (!name) { errors.push("missing name: " + line); continue }
+              addClient({
+                name,
+                email: get("email") || undefined,
+                phone: get("phone") || undefined,
+                website: get("website") || undefined,
+                address: get("address") || undefined,
+                vertical: get("vertical") || undefined,
+                language: get("language") || "it",
+                notes: get("notes") || undefined,
+                source: "csv_import",
+                status: "scouted",
+              })
+              created++
+            } catch (e) { errors.push(String(e)) }
+          }
+          return json({ created, errors })
         }
         // Products (My Products — the expert's own stack)
         if (path === "/api/products" && req.method === "GET") {
@@ -1691,6 +1910,37 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           }
           return json({ updated: updated.length, ids: updated })
         }
+        if (path === "/api/tower/batch-outbound" && req.method === "POST") {
+          const body = await readBody(req)
+          const rawIds = (body.ids ?? []).map(Number).filter((n: number) => Number.isFinite(n) && n > 0)
+          const ids = rawIds.slice(0, 20)
+          const force = !!body.force
+          const dispatched: number[] = []
+          const skipped: number[] = []
+          const failed: { id: number; reason: string }[] = []
+          const blocked = new Set(["contacted", "followup_1", "followup_2", "followup_3", "yes", "done", "no"])
+          for (let i = 0; i < ids.length; i++) {
+            const id = ids[i]
+            const client = getClient(id)
+            if (!client) { failed.push({ id, reason: "not found" }); if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300)); continue }
+            const email = String(client.email || "").trim()
+            if (!email) { skipped.push(id); if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300)); continue }
+            const lower = email.toLowerCase()
+            if (lower.includes("@pec.") || lower.includes("@legalmail.")) { skipped.push(id); if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300)); continue }
+            const stage = String(client.status || "")
+            if (!force && blocked.has(stage)) { skipped.push(id); if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300)); continue }
+            try {
+              const { dispatchToTower } = await import("./tower.js")
+              const r = await dispatchToTower(id, "outbound_prep")
+              if (r.ok || r.skipped) dispatched.push(id)
+              else failed.push({ id, reason: r.error || r.reason || "dispatch failed" })
+            } catch (e) {
+              failed.push({ id, reason: String(e) })
+            }
+            if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 300))
+          }
+          return json({ dispatched, skipped, failed })
+        }
         if (path === "/api/today" && req.method === "GET") {
           const today = new Date().toISOString().slice(0, 10)
           const clients = findClients({ limit: 200 })
@@ -1707,6 +1957,32 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (q) clients = clients.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.next_action || "").toLowerCase().includes(q))
           return json({ clients, total: clients.length })
         }
+        if (path === "/api/settings/telegram/test" && req.method === "POST") {
+          const { testTelegram } = await import("./telegram.js")
+          const r = await testTelegram()
+          return json(r)
+        }
+        if (path === "/api/debug/jobs" && req.method === "GET") {
+          const jobs: any[] = []
+          for (const [id, j] of enrichJobs.entries()) jobs.push({ type: "enrich", id, running: j.running, done: j.done, error: j.error ?? null, lines: j.lines })
+          for (const [id, j] of scoutXJobs.entries()) jobs.push({ type: "scout-x", id, running: j.running, done: j.done, error: j.error ?? null, lines: j.lines })
+          const bp = (globalThis as any).__bpJobs
+          if (bp) for (const [id, j] of bp.entries()) jobs.push({ type: "batch-pipeline", id, running: j.running, done: j.done, error: j.error ?? null, lines: j.lines })
+          for (const [id, j] of debugJobs.entries()) jobs.push({ type: j.type, id, running: j.running, done: j.done, error: j.error ?? null, lines: j.lines })
+          return json({ jobs, logs: debugLogs.slice(-200) })
+        }
+        if (path === "/api/debug/logs" && req.method === "GET") {
+          return json({ logs: debugLogs.slice(-200) })
+        }
+        if (path === "/api/outbound/run-tick" && req.method === "POST") {
+          try {
+            const { runOutboundLoopTick } = await import("./heartbeat.js")
+            const r = await runOutboundLoopTick()
+            return json(r)
+          } catch (e) {
+            return json({ error: String(e) }, 500)
+          }
+        }
         if (path === "/api/clients/update" && req.method === "POST") {
           const body = await readBody(req)
           const id = Number(body.id)
@@ -1717,6 +1993,86 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const client = updateClient(id, patch)
           return json({ client })
         }
+        if (path === "/api/outreach/batch-draft" && req.method === "POST") {
+          const body = await readBody(req)
+          const limit = Math.max(1, Math.min(50, Number(body.limit ?? 50)))
+          let ids: number[] = Array.isArray(body.ids) ? body.ids.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n) && n > 0) : []
+          if (!ids.length) {
+            const rows = crmDb().query(`SELECT id FROM clients WHERE email IS NOT NULL AND TRIM(email) != '' AND email NOT LIKE '%@pec.%' AND email NOT LIKE '%@legalmail.%' ORDER BY CASE WHEN address LIKE '%Castelleone%' THEN 0 WHEN address LIKE '%Crema%' THEN 1 WHEN address LIKE '%Soresina%' THEN 2 WHEN address LIKE '%Cremona%' THEN 3 WHEN address LIKE '%Lodi%' THEN 4 WHEN address LIKE '%Codogno%' THEN 5 ELSE 6 END, id`).all() as any[]
+            const terminal = new Set(["contacted","followup_1","followup_2","followup_3","yes","no","stale","done"])
+            const inPipeline = new Set((crmDb().query("SELECT client_id FROM pipeline WHERE touch > 0").all() as any[]).map((r: any) => r.client_id))
+            for (const r of rows) {
+              const c = getClient(r.id)
+              if (!c) continue
+              if (terminal.has(c.status)) continue
+              if (inPipeline.has(c.id)) continue
+              ids.push(c.id)
+              if (ids.length >= limit) break
+            }
+          }
+          const drafted: number[] = []
+          const skipped: number[] = []
+          const failed: { id: number; reason: string }[] = []
+          const { generateClientOutreachDraft } = await import("./outreach.js")
+          for (let i = 0; i < ids.length; i++) {
+            const id = ids[i]
+            try {
+              const r = await generateClientOutreachDraft(id)
+              if (r.filePath) drafted.push(id)
+              else skipped.push(id)
+            } catch (e) {
+              failed.push({ id, reason: String(e) })
+            }
+            if (i < ids.length - 1) await new Promise((res) => setTimeout(res, 250))
+          }
+          return json({ drafted, skipped, failed })
+        }
+        const genEmailMatch = path.match(/^\/api\/clients\/(\d+)\/generate-email$/)
+        if (genEmailMatch && req.method === "POST") {
+          const id = Number(genEmailMatch[1])
+          const jobId = "genemail_" + id + "_" + Date.now()
+          const job = { type: "generate-email", id: jobId, lines: [] as string[], running: true, done: false, error: undefined as string | undefined, result: undefined as any }
+          debugJobs.set(jobId, job)
+          const log = (l: string) => { job.lines.push(l); dbg(l) }
+          try {
+            log("Generate Email started for client " + id)
+            const { generateClientOutreachDraft } = await import("./outreach.js")
+            const r = await generateClientOutreachDraft(id)
+            job.result = r
+            job.done = true
+            job.running = false
+            log("Generated: " + (r.subject || "(no subject)"))
+            if (r.filePath) log("Draft written: " + r.filePath)
+            return json({ ok: true, subject: r.subject, body: r.body, filePath: r.filePath, row: r.row })
+          } catch (e) {
+            job.error = String(e)
+            job.done = true
+            job.running = false
+            log("ERROR: " + String(e))
+            return json({ error: String(e) }, 500)
+          }
+        }
+        const selectOfferMatch = path.match(/^\/api\/clients\/(\d+)\/select-offer$/)
+        if (selectOfferMatch && req.method === "POST") {
+          const id = Number(selectOfferMatch[1])
+          const body = await readBody(req)
+          const { validateOfferSelection } = await import("./routing.js")
+          const { getClient } = await import("./crm.js")
+          const client = getClient(id)
+          if (!client) return json({ error: "not found" }, 404)
+          const parsed = { offer_track: body.offer_track, offer_rationale: body.offer_rationale }
+          const res = validateOfferSelection(client, parsed)
+          // regenerate draft + call playbook
+          try {
+            const { generateClientOutreachDraft } = await import("./outreach.js")
+            await generateClientOutreachDraft(id)
+          } catch (e) { console.error("[select-offer] draft error:", String(e)) }
+          try {
+            const { generateClientCallPlaybook } = await import("./playbooks.js")
+            await generateClientCallPlaybook(id)
+          } catch (e) { console.error("[select-offer] playbook error:", String(e)) }
+          return json({ ok: true, offer_track: res.offer_track, offer_rationale: res.offer_rationale })
+        }
         if (path === "/api/clients/delete" && req.method === "POST") {
           const body = await readBody(req)
           const id = Number(body.id)
@@ -1725,6 +2081,37 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const ok = deleteClient(id)
           if (!ok) return json({ error: "not found" }, 404)
           return json({ ok: true, id })
+        }
+        if (path === "/api/drafts/update" && req.method === "POST") {
+          const body = await readBody(req)
+          const id = Number(body.id)
+          try {
+            const { updateDraft } = await import("./outreach.js")
+            const r = await updateDraft(id, { subject: body.subject, body: body.body })
+            return json({ ok: true, filePath: r.filePath, row: r.row })
+          } catch (e) {
+            return json({ error: String(e) }, 500)
+          }
+        }
+        const draftContentMatch = path.match(/^\/api\/drafts\/(\d+)\/content$/)
+        if (draftContentMatch && req.method === "GET") {
+          const id = Number(draftContentMatch[1])
+          const { getPipelineRow } = await import("./outreach.js")
+          const row = getPipelineRow(id)
+          if (!row || !row.draft_path) return json({ error: "not found" }, 404)
+          try {
+            const fs = await import("node:fs")
+            const text = fs.readFileSync(row.draft_path, "utf8")
+            // parse subject and body
+            const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+            const fm = fmMatch ? fmMatch[1] : ""
+            const sm = fm.match(/^subject:\s*(.*)$/m)
+            const subject = sm ? sm[1].trim() : ""
+            const body = fmMatch ? fmMatch[2].trim().replace(/\n---[\s\S]*$/, "").trim() : text.trim()
+            return json({ id, subject, body, path: row.draft_path })
+          } catch (e) {
+            return json({ error: String(e) }, 500)
+          }
         }
         if (path === "/api/drafts" && req.method === "GET") {
           const rows = listPipeline({ limit: 200 }).filter((r) => r.draft_path)
@@ -1739,6 +2126,14 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const ids = (body.ids ?? []).map(Number)
           const rows = approveDrafts(ids)
           return json({ approved: rows.length, rows })
+        }
+        if (path === "/api/deny" && req.method === "POST") {
+          const body = await readBody(req)
+          const ids = (body.ids ?? []).map(Number)
+          const { dispose } = await import("./outreach.js")
+          const { crmDb } = await import("./crm.js")
+          for (const id of ids) { try { dispose(id, "no"); crmDb().run("UPDATE pipeline SET draft_path = NULL, updated_at = ? WHERE id = ?", [new Date().toISOString(), id]) } catch {} }
+          return json({ denied: ids.length })
         }
         if (path === "/api/send" && req.method === "POST") {
           const body = await readBody(req)
@@ -1773,6 +2168,85 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             result.run_id = runId
           } catch (e) { /* best effort */ }
           return json(result)
+        }
+        if (path === "/api/scout-y" && req.method === "POST") {
+          const body = await readBody(req)
+          const { scoutJobIntent } = await import("./scout_y.js")
+          const result = await scoutJobIntent({ query: String(body.query ?? ""), location: String(body.location ?? ""), market: body.market, limit: Number(body.limit ?? 15) })
+          return json(result)
+        }
+        if (path === "/api/scout-y/import" && req.method === "POST") {
+          const body = await readBody(req)
+          const leads = Array.isArray(body.leads) ? body.leads : []
+          const created: number[] = []
+          for (const l of leads) {
+            try {
+              const { client } = addClient({
+                name: String(l.company_name ?? ""),
+                vertical: (l.vertical || l.industry || "scout_y"),
+                status: "scouted",
+                score: l.intent_score ?? 50,
+                address: l.address || undefined,
+                phone: l.phone || undefined,
+                website: l.website || undefined,
+                email: l.email || undefined,
+                linkedin: (l.socials || []).find((s: string) => /linkedin/i.test(s)) || undefined,
+                language: l.detected_language || "en",
+                notes: `[SCOUT Y - HIGH INTENT JOB SIGNAL]\\nOpen Role: ${l.job_title}\\nJob URL: ${l.job_url}\\nDetected Signals: ${(l.signals || []).join(", ")}\\nSuggested Track: ${l.recommended_track}${l.akli_relevant ? " + AKLI Team" : ""}`,
+                source: "scout_y",
+              })
+              created.push(client.id)
+              try { logInteraction(client.id, { kind: "scout_y", direction: "note", channel: "web", status: "completed", subject: `Scout Y: ${l.job_title}`, body: `Job URL: ${l.job_url}\\nSignals: ${(l.signals||[]).join(", ")}`, occurred_at: new Date().toISOString() }) } catch {}
+            } catch (e) { /* best effort */ }
+          }
+          return json({ ok: true, created })
+        }
+        if (path === "/api/scout/batch-pipeline" && req.method === "POST") {
+          const body = await readBody(req)
+          const location = String(body.location || "").trim()
+          const query = String(body.query || "").trim()
+          const limit = Math.max(1, Math.min(50, Number(body.limit ?? 35)))
+          const jobId = "bp_" + Date.now()
+          const job: { lines: string[]; running: boolean; done: boolean; error?: string; result?: any } = { lines: [], running: true, done: false, result: null }
+          ;(globalThis as any).__bpJobs = (globalThis as any).__bpJobs || new Map()
+          const jobs = (globalThis as any).__bpJobs
+          jobs.set(jobId, job)
+          const log = (l: string) => job.lines.push(l)
+          ;(async () => {
+            try {
+              log("Scout started")
+              const { scoutBusinesses } = await import("./scouting.js")
+              const res: any = await scoutBusinesses(location, query, limit)
+              const businesses = res?.businesses ?? []
+              log(`Scouted ${businesses.length} businesses`)
+              const { addClient } = await import("./crm.js")
+              const { enrichClient } = await import("./enrichment.js")
+              const created: number[] = []
+              // upsert
+              const ids: number[] = []
+              for (const b of businesses) {
+                try {
+                  const { client } = addClient({ name: b.name, website: b.website, phone: b.phone, address: b.address, email: b.email, source: "batch_pipeline", status: "scouted" })
+                  ids.push(client.id)
+                  created.push(client.id)
+                } catch (e) { /* ignore */ }
+              }
+              log(`Upserted ${ids.length} clients`)
+              // concurrent enrichment pool of 4
+              const { enrichBatch } = await import("./enrichment.js")
+              await enrichBatch(ids, { concurrency: 4, onProgress: log })
+              log("Enrichment done")
+              // generate drafts + playbooks handled inside enrichClient
+              job.result = { created, count: ids.length }
+              job.done = true
+            } catch (e) {
+              job.error = String(e)
+              job.done = true
+            } finally {
+              job.running = false
+            }
+          })()
+          return json({ ok: true, jobId })
         }
         if (path === "/api/scout/runs" && req.method === "GET") {
           return json({ runs: listScoutRuns() })
@@ -2107,7 +2581,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const body = await readBody(req)
           const text = String(body.text ?? body.message ?? "")
           if (!text.trim()) return json({ error: "text required" }, 400)
-          const provider = String(body.provider ?? process.env.ELITZA_CHAT_PROVIDER ?? "opencode-go") as "mimo" | "opencode-go"
+          const provider = "opencode-go"
           const modelOverride = String(body.model ?? "")
           const variantOverride = String(body.variant ?? "")
           // Try engine session first
@@ -2317,7 +2791,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           })
           if (client) {
             try {
-              const { logInteraction } = await import("./crm.js")
+              const { logInteraction, updateClient } = await import("./crm.js")
               logInteraction(client.id, {
                 kind: "email_received",
                 direction: "in",
@@ -2327,7 +2801,30 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 body: text,
                 occurred_at: email.occurred_at,
               })
+              // stop pending follow-ups and advance stage
+              try {
+                const st = client.status
+                if (st === "contacted" || String(st || "").startsWith("followup")) {
+                  updateClient(client.id, { status: "yes" })
+                }
+              } catch {}
             } catch {}
+            // Fire-and-forget Tower inbound hook (never blocks mail route).
+            try {
+              const { dispatchToTower } = await import("./tower.js")
+              void dispatchToTower(client.id, "inbound_received", { email_id: email.id, from, subject, snippet: text.slice(0, 1500) }).catch(() => {})
+            } catch {}
+            // Email-to-calendar reasoning + Telegram alert (fire-and-forget)
+            void (async () => {
+              try {
+                const { extractAndBookMeeting } = await import("./calendar.js")
+                const meeting = await extractAndBookMeeting(email, client, text)
+                const { buildTelegramAlert, sendTelegram } = await import("./telegram.js")
+                const calStatus = meeting.meeting_confirmed ? `Booked ${meeting.startISO}` : "No meeting detected"
+                const alert = buildTelegramAlert({ clientName: client.name, vertical: client.vertical, offer: client.offer_track, snippet: text, calendarStatus: calStatus, link: `http://127.0.0.1:8800/#client-${client.id}` })
+                await sendTelegram(alert)
+              } catch (e) { console.error("[inbound] telegram/calendar error:", String(e)) }
+            })()
           }
           return json({ email, counts: emailCounts() })
         }
@@ -2440,6 +2937,15 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
               imported++
               if (client && !labelIds.includes("SENT")) {
                 try { logInteraction(client.id, { kind: "email_received", direction: "in", channel: "email", status: "received", subject, body: text || m.snippet || "", occurred_at: occurred }) } catch {}
+                // Fire-and-forget Tower inbound hook, only for recent emails (avoid backfill spam).
+                try {
+                  const occurredMs = Date.parse(occurred)
+                  const sevenDays = 7 * 24 * 60 * 60 * 1000
+                  if (Number.isFinite(occurredMs) && (Date.now() - occurredMs) <= sevenDays) {
+                    const { dispatchToTower } = await import("./tower.js")
+                    void dispatchToTower(client.id, "inbound_received", { from, subject, snippet: (text || m.snippet || "").slice(0, 1500) }).catch(() => {})
+                  }
+                } catch {}
               }
             }
             crmDb().run("UPDATE cloud_accounts SET last_sync = ?, last_error = NULL, status = 'connected' WHERE id = ?", [new Date().toISOString(), accountId])
@@ -2546,7 +3052,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           filtered.push("GOOGLE_CLIENT_ID=" + cid)
           if (csecret) filtered.push("GOOGLE_CLIENT_SECRET=" + csecret)
           fs.mkdirSync(pathMod.dirname(envPath), { recursive: true })
-          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\\n") + "\\n", { mode: 0o600 })
+          fs.writeFileSync(envPath, filtered.filter(Boolean).join("\n") + "\n", { mode: 0o600 })
           try { fs.chmodSync(envPath, 0o600) } catch {}
           return json({ ok: true, client_id: cid, client_secret_set: !!csecret || !!lines.some(l => l.trim().startsWith("GOOGLE_CLIENT_SECRET=")) })
         }
@@ -2564,7 +3070,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const state = Math.random().toString(36).slice(2) + Date.now().toString(36)
           // store state in a temp file for verification
           try { fs.writeFileSync(pathMod.join(home, ".oauth_state"), state, { mode: 0o600 }) } catch {}
-          const scope = encodeURIComponent("https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email")
+          const scope = encodeURIComponent("https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events")
           const url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=" + encodeURIComponent(clientId) + "&redirect_uri=" + encodeURIComponent(redirectUri) + "&response_type=code&scope=" + scope + "&access_type=offline&prompt=consent&state=" + encodeURIComponent(state)
           return json({ url, state })
         }
@@ -2618,7 +3124,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const body = await readBody(req)
           const location = String(body.location || "").trim()
           const query = String(body.query || "").trim()
-          const limit = Math.max(1, Math.min(20, Number(body.limit ?? 5)))
+          const limit = Math.max(1, Math.min(50, Number(body.limit ?? 5)))
           const product = String(body.product || "lead-list")
           const price = String(body.price || "$20")
           const paymentLink = String(body.payment_link || "").trim()
@@ -2644,7 +3150,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                 // add to CRM
                 let clientId: number | null = null
                 try {
-                  const { client, created } = addClient({ name: b.name, vertical: query, status: "scouted", score: 50, address: b.address || undefined, phone: b.phone || undefined, website: b.website || undefined, source: "scout-x" })
+                  const { client, created } = addClient({ name: b.name, vertical: query, status: "scouted", score: 50, address: b.address || undefined, phone: b.phone || undefined, website: b.website || undefined, email: b.email || undefined, language: b.detected_language || (String(b.website || "").includes(".it") ? "it" : "en"), source: "scout-x" })
                   clientId = client.id
                   log(created ? "➕ Added to CRM (id " + client.id + ")" : "♻️ Already in CRM (id " + client.id + ")")
                 } catch (e) { log("⚠️ Add to CRM failed: " + String(e)); skipped.push(b.name); continue }
@@ -2659,8 +3165,22 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
                   }
                 } catch (e) { log("⚠️ Enrichment failed: " + String(e)) }
                 const c = getClient(clientId)
-                // draft email if we have an email
-                if (c?.email) {
+                if (product === "tower-outbound") {
+                  try {
+                    const { dispatchToTower } = await import("./tower.js")
+                    const r = await dispatchToTower(clientId, "outbound_prep")
+                    if (r.ok || r.skipped) {
+                      log("📤 Dispatched outbound_prep to Tower" + (r.skipped ? " (no webhook configured)" : ""))
+                      drafted.push(clientId)
+                    } else {
+                      log("⚠️ Tower dispatch failed: " + (r.error || r.reason || "unknown"))
+                      skipped.push(b.name)
+                    }
+                  } catch (e) {
+                    log("⚠️ Tower dispatch failed: " + String(e))
+                    skipped.push(b.name)
+                  }
+                } else if (c?.email) {
                   try {
                     const subject = productSubject(product, c.name, location, price)
                     const body = productBody(product, c, location, price, paymentLink)
@@ -2812,7 +3332,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             try { reply = await proxyChatToEngine(text) } catch (e) { reply = "" }
             if (!reply || reply === "(no response)") {
               try {
-                const provider = (process.env.ELITZA_CHAT_PROVIDER || "opencode-go") as "mimo" | "opencode-go"
+                const provider = "opencode-go"
                 const pageCtx = (ws.data as any).page ? `\\n\\n[Context: user is currently on the "${(ws.data as any).page}" page of the CRM.]` : ""
                 const r = await directChat(text + pageCtx, provider)
                 reply = r.reply
@@ -2873,3 +3393,63 @@ import { fileURLToPath } from "node:url"
 import { dirname } from "node:path"
 const _here = dirname(fileURLToPath(import.meta.url))
 const HTML = readFileSync(join(_here, "crmview.html"), "utf8")
+export function serializeReadyLead(c: any): Record<string, unknown> {
+  let v2: any = null
+  if (c.enrichment_json) {
+    try { v2 = JSON.parse(c.enrichment_json) } catch {}
+  }
+  const audit = v2?.audit ?? null
+  const syn = v2?.synthesis ?? null
+  const emailCand = c.email
+    ? classifyEmailCandidate(c.email, { website: c.website, businessName: c.company || c.name })
+    : null
+
+  return {
+    id: c.id,
+    company_name: c.company || c.name || null,
+    contact_name: c.contact_name || v2?.best_contact_person?.full_name || null,
+    contact_first_name: v2?.best_contact_person?.first_name || null,
+    contact_role: v2?.best_contact_person?.role || null,
+    email: c.email || null,
+    email_bucket: emailCand?.bucket || v2?.best_email?.bucket || null,
+    pec_email: c.pec_email || audit?.pec || null,
+    outreach_route: c.outreach_route || v2?.outreach_route || (emailCand?.sendable ? "email_ready" : "needs_manual_review"),
+    website: c.website || null,
+    city: c.address || null,
+    language: c.language || "it",
+    category: c.category || c.vertical || null,
+    offer_track: c.offer_track || v2?.offer_track || null,
+    team_size_estimate:
+      audit?.team_count_hint?.band && audit.team_count_hint.band !== "unknown"
+        ? audit.team_count_hint.band
+        : c.employee_count && c.employee_count !== "unknown"
+          ? c.employee_count
+          : null,
+    locations_count: audit?.locations_count ?? 1,
+    contact_channels: audit?.channels_detected ?? (c.email ? ["email"] : []),
+    enrichment_signals: {
+      schema_version: v2?.schema_version ?? "1.0",
+      evidence_confidence: syn?.evidence_confidence ?? null,
+      website_summary: syn?.business_summary || c.notes || null,
+      pain_clues: syn?.pain_category || c.pain_category || null,
+      pain_points: syn?.pain_points ?? [],
+      single_thread_focus: syn?.single_thread_focus ?? null,
+      forms_summary: (audit?.forms ?? []).map(
+        (f: any) =>
+          `${f.evidence_id}: ${f.purpose} (${f.plugin}, ${f.field_count} fields${f.dropdown_options?.length ? `, options: ${f.dropdown_options.join("/")}` : ""})`,
+      ),
+      booking_widgets: (audit?.booking_widgets ?? []).map((b: any) => `${b.name} (${b.mode})`),
+      whatsapp_detected: Boolean(audit?.whatsapp?.detected),
+      hours_clues: (audit?.hours_snippets ?? []).map((h: any) => h.text),
+      pdf_clues: (audit?.pdf_signals ?? []).map(
+        (p: any) => `${p.doc_kind}: ${p.anchor_text}${p.extracted_tags?.length ? ` [${p.extracted_tags.join(", ")}]` : ""}`,
+      ),
+      video_clues: (audit?.video_signals ?? []).map(
+        (v: any) => `${v.provider} (tier ${v.tier_used}): ${v.title || v.url}`,
+      ),
+      touch1_question_candidate: syn?.touch1_question_candidate ?? null,
+      phone_and_form_script: syn?.phone_and_form_script ?? null,
+      notes: c.notes || null,
+    },
+  }
+}

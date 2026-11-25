@@ -39,6 +39,7 @@ export function crmDbPath(): string {
 
 export const CLIENT_STATUSES = [
   "scouted",
+  "enriched",
   "contacted",
   "followup_1",
   "followup_2",
@@ -107,6 +108,16 @@ const SCHEMA = `
       revenue_estimate TEXT,
       employee_count TEXT,
       language TEXT NOT NULL DEFAULT 'en',
+      offer_track TEXT,
+      pain_category TEXT,
+      playbook_id TEXT,
+      offer_rationale TEXT,
+      enrichment_json TEXT,
+      enrichment_version TEXT,
+      enriched_at TEXT,
+      outreach_route TEXT,
+      contact_name TEXT,
+      pec_email TEXT,
       person_id INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -551,6 +562,16 @@ function migrate(db: Database): void {
     { name: "revenue_estimate", type: "TEXT" },
     { name: "employee_count", type: "TEXT" },
     { name: "language", type: "TEXT" },
+    { name: "offer_track", type: "TEXT" },
+    { name: "offer_rationale", type: "TEXT" },
+    { name: "pain_category", type: "TEXT" },
+    { name: "playbook_id", type: "TEXT" },
+    { name: "enrichment_json", type: "TEXT" },
+    { name: "enrichment_version", type: "TEXT" },
+    { name: "enriched_at", type: "TEXT" },
+    { name: "outreach_route", type: "TEXT" },
+    { name: "contact_name", type: "TEXT" },
+    { name: "pec_email", type: "TEXT" },
   ]
   for (const col of newCols) {
     if (!clientCols.some((c) => c.name === col.name)) {
@@ -621,11 +642,14 @@ function migrate(db: Database): void {
 }
 
 let instance: Database | undefined
+let instancePath: string | undefined
 
 /** Open (or return) the single connection to the CRM database. */
 export function crmDb(): Database {
-  if (instance) return instance
   const file = crmDbPath()
+  if (instance && instancePath === file) return instance
+  // New db path (e.g. in tests) -> close old connection and open fresh.
+  try { instance?.close() } catch {}
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const conn = new Database(file, { create: true })
   conn.exec("PRAGMA journal_mode=WAL")
@@ -633,6 +657,7 @@ export function crmDb(): Database {
   conn.exec(SCHEMA)
   migrate(conn)
   instance = conn
+  instancePath = file
   return conn
 }
 
@@ -672,6 +697,16 @@ export interface Client {
   revenue_estimate: string | null
   employee_count: string | null
   language: string
+  offer_track: string | null
+  offer_rationale: string | null
+  pain_category: string | null
+  playbook_id: string | null
+  enrichment_json: string | null
+  enrichment_version: string | null
+  enriched_at: string | null
+  outreach_route: string | null
+  contact_name: string | null
+  pec_email: string | null
   created_at: string
   updated_at: string
 }
@@ -709,6 +744,16 @@ export interface ClientInput {
   revenue_estimate?: string
   employee_count?: string
   language?: string
+  offer_track?: string
+  offer_rationale?: string
+  pain_category?: string
+  playbook_id?: string
+  enrichment_json?: string
+  enrichment_version?: string
+  enriched_at?: string
+  outreach_route?: string
+  contact_name?: string
+  pec_email?: string
 }
 
 export interface Interaction {
@@ -825,6 +870,18 @@ function row<T>(sql: string, params: unknown[] = []): T | undefined {
 // Clients
 // ---------------------------------------------------------------------------
 
+/** Normalize a website URL: strip scheme, www., query/hash, trailing slash. */
+export function normalizeWebsite(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let v = raw.trim()
+  if (!v) return null
+  v = v.replace(/^https?:\/\//i, "")
+  v = v.replace(/^www\./i, "")
+  v = v.split("?")[0].split("#")[0]
+  v = v.replace(/\/+$/, "")
+  return v || null
+}
+
 /**
  * Insert a client, or return the existing one when the same business is
  * already in the CRM: a website match wins (scout data always has one when
@@ -834,7 +891,7 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
   const name = input.name.trim()
   if (!name) throw new Error("A client needs a name.")
   const status = assertStatus(input.status ?? "scouted")
-  const website = input.website?.trim() || null
+  const website = normalizeWebsite(input.website?.trim() || null)
   const address = input.address?.trim() || null
 
   const existing = website
@@ -880,6 +937,16 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
     "revenue_estimate",
     "employee_count",
     "language",
+    "offer_track",
+    "offer_rationale",
+    "pain_category",
+    "playbook_id",
+    "enrichment_json",
+    "enrichment_version",
+    "enriched_at",
+    "outreach_route",
+    "contact_name",
+    "pec_email",
     "created_at",
     "updated_at",
   ]
@@ -919,6 +986,16 @@ export function addClient(input: ClientInput): { client: Client; created: boolea
         input.revenue_estimate ?? null,
         input.employee_count ?? null,
         input.language ?? "en",
+        input.offer_track ?? null,
+        input.offer_rationale ?? null,
+        input.pain_category ?? null,
+        input.playbook_id ?? null,
+        input.enrichment_json ?? null,
+        input.enrichment_version ?? null,
+        input.enriched_at ?? null,
+        input.outreach_route ?? null,
+        input.contact_name ?? null,
+        input.pec_email ?? null,
         now,
         now,
       ],
@@ -1171,6 +1248,16 @@ const UPDATABLE = [
   "revenue_estimate",
   "employee_count",
   "language",
+  "offer_track",
+  "offer_rationale",
+  "pain_category",
+  "playbook_id",
+  "enrichment_json",
+  "enrichment_version",
+  "enriched_at",
+  "outreach_route",
+  "contact_name",
+  "pec_email",
 ] as const
 
 export type ClientPatch = Partial<Record<(typeof UPDATABLE)[number], string | number | null>>
@@ -1200,7 +1287,7 @@ export function deleteClient(id: number): boolean {
   const client = getClient(id)
   if (!client) return false
   const db = crmDb()
-  for (const table of ["client_interactions", "client_assets", "client_deals", "client_tags"]) {
+  for (const table of ["client_interactions", "client_assets", "deals", "client_tags"]) {
     try { db.run(`DELETE FROM ${table} WHERE client_id = ?`, [id]) } catch { /* table may not exist */ }
   }
   db.run("DELETE FROM clients WHERE id = ?", [id])
@@ -1423,8 +1510,9 @@ export function listAssets(clientId: number): ClientAsset[] {
   ])
 }
 
-// Run the one-time migration on module load (best effort).
-try { migrateEnrichedLeads() } catch { /* ignore */ }
+// One-time migration disabled: it clobbered manual status changes
+// (e.g. demoting an enriched lead back to scouted). Run manually if needed.
+// try { migrateEnrichedLeads() } catch { /* ignore */ }
 
 // ---------------------------------------------------------------------------
 // Configured pipeline stages (from ~/.ai-enablement-agent/pipeline-stages.json, else defaults)
@@ -1511,6 +1599,10 @@ export interface TriggerInput {
 export function addTrigger(clientId: number, input: TriggerInput): EmailTrigger {
   const client = getClient(clientId)
   if (!client) throw new Error(`No client with id ${clientId}.`)
+  // Deduplicate by (client_id, name): if a trigger with the same name already
+  // exists for this client, return the existing row instead of inserting.
+  const existing = crmDb().query("SELECT * FROM email_triggers WHERE client_id = ? AND name = ?").get(clientId, input.name) as EmailTrigger | undefined
+  if (existing) return existing
   const result = crmDb().run(
     `INSERT INTO email_triggers (client_id, name, event, subject, body, status, cooldown_days, created_at)
      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
@@ -1784,21 +1876,48 @@ export function exportClientsCSV(): string {
   return lines.join("\n")
 }
 
+/** RFC-4180 CSV parser: returns array of rows, each row an array of fields. */
+function parseCSV(csv: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ""
+  let inQuotes = false
+  let i = 0
+  const s = csv
+  while (i < s.length) {
+    const c = s[i]
+    if (inQuotes) {
+      if (c === '"') {
+        if (s[i + 1] === '"') { field += '"'; i += 2; continue }
+        inQuotes = false; i++; continue
+      }
+      field += c; i++; continue
+    }
+    if (c === '"') { inQuotes = true; i++; continue }
+    if (c === ',') { row.push(field); field = ""; i++; continue }
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; i++; continue }
+    if (c === '\r') { i++; continue }
+    field += c; i++
+  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row) }
+  return rows
+}
+
 export function importClientsCSV(csv: string): { imported: number; skipped: number } {
-  const lines = csv.trim().split(/\r?\n/)
-  if (lines.length < 2) return { imported: 0, skipped: 0 }
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase())
+  const parsed = parseCSV(csv.trim())
+  if (parsed.length < 2) return { imported: 0, skipped: 0 }
+  const header = parsed[0].map((h) => h.trim().toLowerCase())
   const nameIdx = header.indexOf("name")
-  if (nameIdx < 0) return { imported: 0, skipped: lines.length - 1 }
+  if (nameIdx < 0) return { imported: 0, skipped: parsed.length - 1 }
   let imported = 0, skipped = 0
-  for (let i = 1; i < lines.length; i++) {
-    // naive csv split (no quoted commas) — good enough for simple exports
-    const cols = lines[i].split(",")
-    const name = (cols[nameIdx] ?? "").trim().replace(/^"|"$/g, "")
+  for (let i = 1; i < parsed.length; i++) {
+    const cols = parsed[i]
+    if (cols.every((c) => c.trim() === "")) { skipped++; continue }
+    const name = (cols[nameIdx] ?? "").trim()
     if (!name) { skipped++; continue }
     const get = (k: string) => {
       const idx = header.indexOf(k)
-      return idx >= 0 ? (cols[idx] ?? "").trim().replace(/^"|"$/g, "") : ""
+      return idx >= 0 ? (cols[idx] ?? "").trim() : ""
     }
     addClient({
       name,
@@ -2420,7 +2539,7 @@ export function productsSummary(): string {
 
 export interface Referral {
   id: number; type: string; status: string;
-  referrer_kind: string; referrer_client_id: number | null; referrer_name: string | null;
+  referrer_kind: string; referrer_client_id: number | null; referrer_person_id: number | null; referrer_name: string | null;
   referee_kind: string; referee_client_id: number | null; referee_name: string | null;
   total_value: number | null; split_percent: number | null; split_amount: number | null;
   currency: string; paid_at: string | null; notes: string | null;
@@ -2428,7 +2547,7 @@ export interface Referral {
 }
 export interface ReferralInput {
   type?: string; status?: string;
-  referrer_kind?: string; referrer_client_id?: number | null; referrer_name?: string | null;
+  referrer_kind?: string; referrer_client_id?: number | null; referrer_person_id?: number | null; referrer_name?: string | null;
   referee_kind?: string; referee_client_id?: number | null; referee_name?: string | null;
   total_value?: number | null; split_percent?: number | null; split_amount?: number | null;
   currency?: string; paid_at?: string | null; notes?: string | null;

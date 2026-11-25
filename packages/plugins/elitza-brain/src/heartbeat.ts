@@ -51,7 +51,10 @@ import fs from "node:fs"
 import { consolidate, getMetamemory, pruneAll, recall } from "./memory.js"
 import { soulGet, soulSet } from "./soul.js"
 import { pollPipeline } from "./pipeline.js"
-import { queueFollowups, sweepExhausted } from "./outreach.js"
+import { queueFollowups, sweepExhausted, generateClientOutreachDraft } from "./outreach.js"
+import { scoutBusinesses } from "./scouting.js"
+import { enrichClient } from "./enrichment.js"
+import { addClient, getClient, crmDb, findClients } from "./crm.js"
 import { processTriggers, continuousBackupStream } from "./crm.js"
 
 export interface EmotionEngine {
@@ -168,6 +171,56 @@ export interface Heartbeat {
  * the integration test can watch real ticks without waiting minutes; omit it
  * and the env-configured cadence is used.
  */
+export async function runOutboundLoopTick(): Promise<{ scouted: number; enriched: number; drafted: number; queued_for_approval: number; skipped?: string }> {
+  if (process.env.ELITZA_AUTO_STOP_AT && Date.now() > Date.parse(process.env.ELITZA_AUTO_STOP_AT)) {
+    return { scouted: 0, enriched: 0, drafted: 0, queued_for_approval: 0, skipped: "auto_stop_at reached" }
+  }
+  let scouted = 0, enriched = 0, drafted = 0, queued = 0
+  // Step A: rotating local scout
+  const pairs: [string, string][] = []
+  const locs = ["Castelleone, Italy", "Crema, Italy", "Soresina, Italy", "Cremona, Italy", "Lodi, Italy", "Codogno, Italy"]
+  const qs = ["dentisti", "fisioterapisti", "idraulici", "autofficine", "commercialisti", "avvocati"]
+  for (const l of locs) for (const q of qs) pairs.push([l, q])
+  const cursorRaw = soulGet("outbound_scout_cursor", "0")
+  let cursor = Number(cursorRaw) || 0
+  // count scouted IT clients
+  const scoutedIt = (crmDb().query("SELECT COUNT(*) AS c FROM clients WHERE language = 'it'").get() as any)?.c ?? 0
+  if (scoutedIt < 30) {
+    const [loc, q] = pairs[cursor % pairs.length]
+    cursor = (cursor + 1) % pairs.length
+    soulSet("outbound_scout_cursor", String(cursor))
+    try {
+      const res: any = await scoutBusinesses(loc, q, 15)
+      const businesses = res?.businesses ?? []
+      for (const b of businesses) {
+        try {
+          const { client, created } = addClient({ name: b.name, website: b.website, phone: b.phone, address: b.address, email: b.email, status: "scouted", language: "it", source: "auto_loop" })
+          if (created) scouted++
+        } catch { /* ignore */ }
+      }
+    } catch (e) { debug(`outbound scout error: ${String(e)}`) }
+  }
+  // Step B: enrich & queue drafts
+  const enrichLimit = Number(process.env.ELITZA_ENRICH_PER_TICK ?? 5)
+  const scoutedClients = crmDb().query("SELECT id FROM clients WHERE status = 'scouted' AND (notes IS NULL OR notes NOT LIKE '%Outreach route%') ORDER BY CASE WHEN address LIKE '%Castelleone%' THEN 0 WHEN address LIKE '%Crema%' THEN 1 WHEN address LIKE '%Soresina%' THEN 2 WHEN address LIKE '%Cremona%' THEN 3 WHEN address LIKE '%Lodi%' THEN 4 WHEN address LIKE '%Codogno%' THEN 5 ELSE 6 END, id LIMIT ?").all(enrichLimit) as any[]
+  for (const r of scoutedClients) {
+    try {
+      await enrichClient(r.id)
+      enriched++
+      await new Promise((res) => setTimeout(res, 1000))
+    } catch (e) { debug(`outbound enrich error: ${String(e)}`) }
+  }
+  // Step C: backfill enriched leads missing a pipeline draft
+  const enrichedClients = crmDb().query("SELECT c.id FROM clients c WHERE c.status = 'enriched' AND c.email IS NOT NULL AND TRIM(c.email) != '' AND c.email NOT LIKE '%@pec.%' AND c.email NOT LIKE '%@legalmail.%' AND NOT EXISTS (SELECT 1 FROM pipeline p WHERE p.client_id = c.id) LIMIT 5").all() as any[]
+  for (const r of enrichedClients) {
+    try {
+      const dr = await generateClientOutreachDraft(r.id)
+      if (dr.filePath) { drafted++; queued++ }
+    } catch (e) { debug(`outbound draft error: ${String(e)}`) }
+  }
+  return { scouted, enriched, drafted, queued_for_approval: queued }
+}
+
 export function startHeartbeat(emotion: EmotionEngine, cadenceMs?: number): Heartbeat {
   if (process.env.ELITZA_HEARTBEAT === "0") {
     debug("disabled via ELITZA_HEARTBEAT=0")
@@ -207,6 +260,13 @@ export function startHeartbeat(emotion: EmotionEngine, cadenceMs?: number): Hear
       } catch (error) {
         debug(`cadence-error: ${String(error)}`)
       }
+    }
+
+    // OUTBOUND LOOP — scout + enrich + draft, all drafts stay approved=0.
+    if (process.env.ELITZA_OUTBOUND_LOOP !== "0") {
+      void runOutboundLoopTick()
+        .then((r) => { if (r.drafted || r.scouted || r.enriched) debug(`outbound loop: scouted=${r.scouted} enriched=${r.enriched} drafted=${r.drafted} queued=${r.queued_for_approval} skipped=${r.skipped ?? ""}`) })
+        .catch((e) => debug(`outbound-loop-error: ${String(e)}`))
     }
 
     // TRIGGERS — event-driven touches (Task: triggered email engine).
