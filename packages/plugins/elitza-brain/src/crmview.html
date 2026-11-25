@@ -348,6 +348,8 @@ setTimeout(updateNavToggleLabel, 150);
     display: flex; flex-direction: column; gap: 6px;
     flex-shrink: 0;
     max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   .column-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -991,15 +993,7 @@ setTimeout(updateNavToggleLabel, 150);
           <p style="margin:0;color:var(--text-muted);font-size:13px">Every client, by stage. Drag a card to move it. Click to open details.</p>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <label style="color:var(--text-muted);font-size:13px">Per page:</label>
-          <select id="boardPageSize" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="boardPage=1;loadBoard()">
-            <option value="10">10</option>
-            <option value="20" selected>20</option>
-            <option value="50">50</option>
-          </select>
-          <button class="btn sm secondary" onclick="boardPrev()">‹ Prev</button>
-          <span id="boardPageInfo" style="color:var(--text-muted);font-size:13px"></span>
-          <button class="btn sm secondary" onclick="boardNext()">Next ›</button>
+          <input id="boardSearch" type="text" placeholder="Elastic search: type a name, company, email, phone…" style="flex:1;min-width:240px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" oninput="debounceBoardSearch()">
           <span id="boardCounter" style="color:var(--text-muted);font-size:13px;margin-left:auto"></span>
         </div>
         <div class="board" id="boardCols" style="overflow-x:auto;overflow-y:hidden"></div>
@@ -4067,21 +4061,19 @@ async function saveStatus(id, status) {
   catch (e) { toast('Save failed: ' + e.message, 'err'); }
 }
 
-let boardPage = 1;
-function boardPageSizeVal() { return Number(document.getElementById('boardPageSize')?.value || 20); }
-function boardPrev() { if (boardPage > 1) { boardPage--; loadBoard(); } }
-function boardNext() { boardPage++; loadBoard(); }
+function debounceBoardSearch() {
+  clearTimeout(window._boardSearchTimer);
+  window._boardSearchTimer = setTimeout(() => { loadBoard(); }, 250);
+}
 async function loadBoard() {
-  const perPage = boardPageSizeVal();
+  const q = (document.getElementById('boardSearch')?.value || '').trim();
   let data;
-  try { data = await api('/api/clients?per_page=' + perPage + '&page=' + boardPage); }
+  try { data = await api('/api/clients?all=1' + (q ? '&q=' + encodeURIComponent(q) : '')); }
   catch (e) { document.getElementById('boardCols').innerHTML = '<div class="empty-state"><h3>Failed to load</h3><p>'+esc(String(e))+'</p></div>'; document.getElementById('statusText').textContent = 'Error'; return; }
   clients = (data && data.clients) || [];
   // Ensure any client status becomes a column so moved leads never disappear.
   for (const c of clients) { if (c.status && !STATUSES.includes(c.status)) { STATUSES.push(c.status); STATUS_LABEL[c.status]=c.status; STATUS_COLOR[c.status]='muted'; COLUMN_COLOR[c.status]='#62666d'; } }
   const total = (data && typeof data.total === 'number') ? data.total : clients.length;
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
-  if (boardPage > totalPages) { boardPage = totalPages; loadBoard(); return; }
   document.getElementById('navCount').textContent = total;
   const cols = document.getElementById('boardCols');
   cols.innerHTML = '';
@@ -4089,8 +4081,9 @@ async function loadBoard() {
     const msg = document.createElement('div');
     msg.className = 'empty-state';
     msg.style.gridColumn = '1 / -1';
-    msg.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><h3>No clients yet</h3><p>Open the <strong>Scout</strong> tab to find local businesses, or add one manually. Your pipeline will appear here.</p>';
+    msg.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><h3>' + (q ? 'No matches' : 'No clients yet') + '</h3><p>' + (q ? 'No clients match "'+esc(q)+'".' : 'Open the <strong>Scout</strong> tab to find local businesses, or add one manually. Your pipeline will appear here.') + '</p>';
     cols.appendChild(msg);
+    document.getElementById('boardCounter').textContent = (q ? '0 matches' : '0 client(s)');
     document.getElementById('statusText').textContent = 'Ready';
     return;
   }
@@ -4132,8 +4125,7 @@ async function loadBoard() {
     }
     cols.appendChild(col);
   }
-  document.getElementById('boardPageInfo').textContent = 'Page ' + boardPage + ' of ' + totalPages;
-  document.getElementById('boardCounter').textContent = total + ' client(s)';
+  document.getElementById('boardCounter').textContent = total + ' client(s)' + (q ? ' matching "' + q + '"' : '');
   document.getElementById('statusText').textContent = total + ' client(s)';
 }
 
@@ -5156,6 +5148,33 @@ if (boardEl) {
     if (!isPanning) return;
     isPanning = false;
     boardEl.classList.remove('panning');
+  });
+  // Touch pan (mobile feel): drag to scroll horizontally.
+  let touchStartX = 0;
+  let touchStartScroll = 0;
+  let touchMoved = false;
+  boardEl.addEventListener('touchstart', (e) => {
+    if (e.target.closest && e.target.closest('.kanban-card')) return;
+    if (!e.touches || e.touches.length !== 1) return;
+    isPanning = true;
+    touchMoved = false;
+    touchStartX = e.touches[0].clientX;
+    touchStartScroll = boardEl.scrollLeft;
+    boardEl.classList.add('panning');
+  }, { passive: true });
+  boardEl.addEventListener('touchmove', (e) => {
+    if (!isPanning || !e.touches || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 4) touchMoved = true;
+    boardEl.scrollLeft = touchStartScroll - dx;
+    if (touchMoved) e.preventDefault();
+  }, { passive: false });
+  boardEl.addEventListener('touchend', () => {
+    if (!isPanning) return;
+    panMoved = touchMoved;
+    isPanning = false;
+    boardEl.classList.remove('panning');
+    setTimeout(() => { panMoved = false; }, 50);
   });
 }
 try { loadPipelineStages().then(() => loadBoard()).then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }

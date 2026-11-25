@@ -1197,6 +1197,12 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const sort = url.searchParams.get("sort") ?? undefined
           const dir = (url.searchParams.get("dir") === "asc" ? "asc" : "desc") as "asc" | "desc"
           const pipeline = url.searchParams.get("pipeline") === "1"
+          const all = url.searchParams.get("all") === "1"
+          if (all) {
+            const clients = findClients({ status, query, sort, dir, pipeline, all: true })
+            const total = countClients({ status, query, pipeline })
+            return json({ clients, total, page: 1, per_page: total, sort, dir, all: true })
+          }
           const perPage = Math.max(1, Math.min(200, Number(url.searchParams.get("per_page") ?? url.searchParams.get("limit") ?? 50)))
           const page = Math.max(1, Number(url.searchParams.get("page") ?? 1))
           const offset = (page - 1) * perPage

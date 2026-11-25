@@ -1013,14 +1013,16 @@ export interface ClientQuery {
   sort?: string
   dir?: "asc" | "desc"
   pipeline?: boolean
+  all?: boolean
 }
 
 /** Find clients by name/vertical/website text and/or exact status, newest first. */
 const SORTABLE = new Set(["name", "email", "phone", "score", "source", "status", "company", "deal_value", "created_at", "updated_at"])
 
 export function findClients(query: ClientQuery = {}): Client[] {
-  const limit = Math.max(1, Math.min(200, query.limit ?? 50))
-  const offset = Math.max(0, query.offset ?? 0)
+  const all = query.all === true
+  const limit = all ? undefined : Math.max(1, Math.min(200, query.limit ?? 50))
+  const offset = all ? 0 : Math.max(0, query.offset ?? 0)
   const filters: string[] = []
   const params: unknown[] = []
   if (query.status) {
@@ -1039,9 +1041,12 @@ export function findClients(query: ClientQuery = {}): Client[] {
   const where = filters.length ? `WHERE ${filters.join(" AND ")}` : ""
   const sortCol = SORTABLE.has(query.sort ?? "") ? (query.sort as string) : "updated_at"
   const dir = query.dir === "asc" ? "ASC" : "DESC"
+  if (all) {
+    return rows<Client>(`SELECT * FROM clients ${where} ORDER BY ${sortCol} ${dir}`, params)
+  }
   return rows<Client>(`SELECT * FROM clients ${where} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`, [
     ...params,
-    limit,
+    limit as number,
     offset,
   ])
 }
