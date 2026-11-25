@@ -18,7 +18,6 @@ import { addToPipeline, writeDraft } from "./outreach.js"
 import { makeBrainTools } from "./tools.js"
 import { approveDrafts, sendApproved, listPipeline } from "./outreach.js"
 import { advance, recordPayment, scheduleCall, productionState } from "./production.js"
-import { listWorksheets, recommendWorksheets, pullWorksheet } from "./worksheets.js"
 import { seedPlaybooks } from "./playbooks.js"
 
 // Load ~/.ai-enablement-agent/.env (mode 600) into process.env, like the elitza launcher does.
@@ -2621,21 +2620,6 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           }
           return json({ reply: reply || "(no response)", thinking })
         }
-        if (path === "/api/worksheets" && req.method === "GET") {
-          return json({ worksheets: listWorksheets() })
-        }
-        if (path === "/api/worksheets/recommend" && req.method === "GET") {
-          const id = Number(url.searchParams.get("id"))
-          const client = getClient(id)
-          if (!client) return json({ error: "not found" }, 404)
-          return json({ client_id: id, recommended: recommendWorksheets(client, Number(url.searchParams.get("limit") ?? 3)) })
-        }
-        if (path === "/api/worksheets/pull" && req.method === "POST") {
-          const body = await readBody(req)
-          const result = pullWorksheet(Number(body.id), String(body.worksheet_id ?? ""))
-          return json(result)
-        }
-
         // ---- Mail ----
         if (path === "/api/emails" && req.method === "GET") {
           const folder = url.searchParams.get("folder") || undefined

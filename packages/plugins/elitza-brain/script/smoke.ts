@@ -209,7 +209,6 @@ const expected = [
   "template",
   "trigger",
   "vertical",
-  "worksheets",
 ]
 assert.deepEqual(
   tools.map((t) => t.name).sort(),

@@ -2,7 +2,6 @@ import fs from "node:fs"
 import path from "node:path"
 import { getClient, updateClient, logInteraction, addAsset } from "./crm.js"
 import { AI_ENABLEMENT_HOME } from "./db.js"
-import { pullRecommendedWorksheet } from "./worksheets.js"
 import { crawlWebsiteAudit } from "./crawler_v2.js"
 import {
   classifyEmailCandidate,
@@ -194,7 +193,6 @@ export interface EnrichmentResult {
   revenue_estimate: string
   employee_count: string
   next_action: string
-  worksheets: string[]
   outreach_route?: string
   pain_category?: string
   evidence_confidence?: string
@@ -214,7 +212,7 @@ export async function enrichClient(
     return {
       ok: false, client_id: clientId, website: null, emails: [], phones: [], socials: {},
       diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "",
-      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [],
+      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "",
       error: `No client with id ${clientId}.`,
     }
   }
@@ -312,8 +310,7 @@ export async function enrichClient(
       diagnosis: "", proposal: "", price: "", risk_level: "high", risk_score: 70,
       risk_notes: "No verifiable public signal found.", tech_stack: "unknown",
       revenue_estimate: "unknown", employee_count: "unknown",
-      next_action: "Add website or verify contact details manually.", worksheets: [],
-      outreach_route: "needs_manual_review", error: "No public information found.",
+      next_action: "Add website or verify contact details manually.",      outreach_route: "needs_manual_review", error: "No public information found.",
     }
   }
 
@@ -333,7 +330,7 @@ export async function enrichClient(
     return {
       ok: false, client_id: clientId, website, emails: sendableEmails, phones: intel.phones_found, socials,
       diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "",
-      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "", worksheets: [],
+      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "",
       error: "OpenCode Go plan is not connected.",
     }
   }
@@ -565,7 +562,6 @@ Return ONLY this JSON object:
     enrichment_json: JSON.stringify(recordV2),
   })
 
-  let pulledWorksheets: string[] = []
   try {
     const stamp = now.slice(0, 10)
     const dir = path.join(AI_ENABLEMENT_HOME, "pipeline", stamp)
@@ -591,8 +587,6 @@ Return ONLY this JSON object:
       body: JSON.stringify(recordV2, null, 2),
       occurred_at: now,
     })
-    const pulls = pullRecommendedWorksheet(clientId, 1)
-    pulledWorksheets = pulls.map((p) => p.worksheet.id)
   } catch {}
 
   try {
@@ -617,7 +611,6 @@ Return ONLY this JSON object:
     revenue_estimate: "unknown",
     employee_count: empSummary,
     next_action: synthesis.next_action,
-    worksheets: pulledWorksheets,
     outreach_route: outreachRoute,
     pain_category: synthesis.pain_category,
     evidence_confidence: synthesis.evidence_confidence,

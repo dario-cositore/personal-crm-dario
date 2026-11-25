@@ -16,7 +16,7 @@ export interface StagePlaybook {
   what_to_say: { channel: "email" | "call" | "whatsapp"; subject?: string; script: string }[]
   what_not_to_say: string[]
   objection_handlers: { objection: string; reply: string }[]
-  auto_bundle: { templates: string[]; worksheets: string[]; triggers: { event: string; name: string; subject: string; body: string; cooldown_days?: number }[] }
+  auto_bundle: { templates: string[]; triggers: { event: string; name: string; subject: string; body: string; cooldown_days?: number }[] }
 }
 
 export interface CasePlaybook {
@@ -89,7 +89,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -123,7 +122,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       ],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:contacted:14",
@@ -138,7 +136,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
     "yes": {
       "what_to_do": [
         "Advance client from 'yes' to 'scheduled' once the 20-minute Discovery Call ($0) is booked.",
-        "Pull the recommended discovery worksheet into client_assets.",
         "Identify team size (<20 vs 20–200+) and workflow determinism to route to Track 1 or Track 2 after the call."
       ],
       "what_to_say": [
@@ -154,7 +151,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -176,7 +172,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -200,7 +195,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": []
       }
     }
@@ -243,7 +237,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -273,7 +266,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "lead-capture-webhook"
         ],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -294,7 +286,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -324,7 +315,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:proposal:5",
@@ -355,7 +345,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -378,7 +367,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "review-request-sequence"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_after_handover:14",
@@ -430,7 +418,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -462,7 +449,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       ],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -483,7 +469,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -507,7 +492,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:proposal:5",
@@ -536,7 +520,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -559,7 +542,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "review-request-sequence"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_after_handover:14",
@@ -611,7 +593,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -643,7 +624,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       ],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:contacted:14",
@@ -671,7 +651,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -694,7 +673,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": []
       }
     }
@@ -737,7 +715,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -767,7 +744,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "lead-capture-webhook"
         ],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -786,7 +762,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -810,7 +785,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:proposal:5",
@@ -840,7 +814,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -862,7 +835,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "review-request-sequence"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_after_handover:14",
@@ -913,7 +885,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -941,7 +912,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       ],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -960,7 +930,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -982,7 +951,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "invoice-reminder"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_in_stage:proposal:5",
@@ -1010,7 +978,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -1032,7 +999,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "review-request-sequence"
         ],
-        "worksheets": [],
         "triggers": [
           {
             "event": "days_after_handover:14",
@@ -1084,7 +1050,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -1115,7 +1080,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
         "templates": [
           "lead-capture-webhook"
         ],
-        "worksheets": [],
         "triggers": []
       }
     }
@@ -1161,7 +1125,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
       "objection_handlers": [],
       "auto_bundle": {
         "templates": [],
-        "worksheets": [],
         "triggers": []
       }
     },
@@ -1193,7 +1156,6 @@ const CURATED_PLAYBOOKS: CasePlaybook[] = [
           "lead-capture-webhook",
           "review-request-sequence"
         ],
-        "worksheets": [],
         "triggers": []
       }
     }

@@ -1095,7 +1095,6 @@ setTimeout(updateNavToggleLabel, 150);
             <option value="workflow">Workflow</option>
             <option value="automation">Automation</option>
             <option value="template">Template</option>
-            <option value="worksheet">Worksheet</option>
             <option value="other">Other</option>
           </select>
           <span id="productsCounter" style="color:var(--text-muted);font-size:13px"></span>
@@ -1111,8 +1110,7 @@ setTimeout(updateNavToggleLabel, 150);
               <option value="workflow">Workflow</option>
               <option value="automation">Automation</option>
               <option value="template">Template</option>
-              <option value="worksheet">Worksheet</option>
-              <option value="other">Other</option>
+                <option value="other">Other</option>
             </select></label>
             <label>Price (EUR)<input id="productPrice" type="number" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
             <label>Currency<input id="productCurrency" type="text" value="EUR" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)"></label>
@@ -4257,15 +4255,7 @@ async function openDetail(id) {
     + '<div class="drawer-section"><h3>Assets</h3>'
     + (data.assets.length ? data.assets.map(a=>'<div class="asset-row" style="cursor:pointer" onclick="viewAsset(\''+esc(a.path||'')+'\',\''+esc(a.name)+'\',\''+esc(a.kind)+'\')"><span class="kind">'+esc(a.kind)+'</span><span>'+esc(a.name)+'</span>'+(a.path?'<span class="path">'+esc(a.path)+'</span>':'')+'</div>').join('') : '<div class="empty-state" style="padding:20px"><p>No assets yet.</p></div>')
     + '</div>'
-    + '<div class="drawer-section"><h3>Worksheets (internal)</h3>'
-    + '<div id="worksheetRecs" class="empty-state" style="padding:12px"><p>Loading recommendations…</p></div>'
-    + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
-    + '<button class="btn secondary sm" onclick="pullRecommendedWorksheet('+c.id+')">Pull recommended</button>'
-    + '<button class="btn secondary sm" onclick="listAllWorksheets()">Browse all</button>'
-    + '</div>'
-    + '</div>';
   showView('detail');
-  loadWorksheetRecs(id);
   loadCallKit(id);
   restoreEnrichPanel(id);
   restoreAutopilotPanel(id);
@@ -4340,52 +4330,6 @@ async function saveTowerSecret(name, value) {
 }
 
 function closeDetail() { showView('board'); }
-
-async function loadWorksheetRecs(id) {
-  const el = document.getElementById('worksheetRecs');
-  if (!el) return;
-  try {
-    const r = await api('/api/worksheets/recommend?id=' + id);
-    const recs = r.recommended || [];
-    if (!recs.length) { el.innerHTML = '<p>No recommendations.</p>'; return; }
-    el.innerHTML = recs.map(w => '<div class="asset-row" style="cursor:pointer" onclick="pullWorksheetById('+id+',\''+esc(w.id)+'\')"><span class="kind">worksheet</span><span>'+esc(w.title)+'</span><span class="path">'+esc((w.tags||[]).join(', '))+'</span></div>').join('');
-  } catch (e) {
-    el.innerHTML = '<p>Could not load recommendations.</p>';
-  }
-}
-
-async function pullWorksheetById(clientId, worksheetId) {
-  try {
-    const r = await api('/api/worksheets/pull', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: clientId, worksheet_id: worksheetId }) });
-    toast('Pulled ' + (r.worksheet ? r.worksheet.title : worksheetId), 'ok');
-    const data = await api('/api/clients/' + clientId);
-    // refresh assets list by reopening detail
-    openDetail(clientId);
-  } catch (e) {
-    toast('Pull failed: ' + e, 'err');
-  }
-}
-
-async function pullRecommendedWorksheet(clientId) {
-  try {
-    const r = await api('/api/worksheets/recommend?id=' + clientId);
-    const recs = r.recommended || [];
-    if (!recs.length) { toast('No recommendations', 'warn'); return; }
-    await pullWorksheetById(clientId, recs[0].id);
-  } catch (e) {
-    toast('Pull failed: ' + e, 'err');
-  }
-}
-
-async function listAllWorksheets() {
-  try {
-    const r = await api('/api/worksheets');
-    const ws = r.worksheets || [];
-    alert(ws.map(w => w.id + ' — ' + w.title).join('\\n'));
-  } catch (e) {
-    toast('Failed: ' + e, 'err');
-  }
-}
 
 async function viewAsset(filePath, name, kind) {
   if (!filePath) { toast('No file path for this asset', 'warn'); return; }

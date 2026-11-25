@@ -7,7 +7,6 @@ import { enrichClient } from "./enrichment.js"
 import { routeAndPersist, routeClientTrack } from "./routing.js"
 import { resolvePlaybook, renderPlaceholders } from "./playbooks.js"
 import { instantiateTemplate } from "./templates.js"
-import { pullWorksheet } from "./worksheets.js"
 import { writeDraft, generateClientOutreachDraft } from "./outreach.js"
 import { nowISO } from "./db.js"
 
@@ -55,13 +54,6 @@ export async function runCaseAutopilot(clientId: number, opts?: { onProgress?: (
       if (res) stagedAssets.push(res.dir)
     }
   }
-  // Worksheets.
-  if (stagePb?.auto_bundle?.worksheets) {
-    for (const w of stagePb.auto_bundle.worksheets) {
-      try { pullWorksheet(clientId, w) } catch { /* best effort */ }
-    }
-  }
-
   // Triggers.
   if (stagePb?.auto_bundle?.triggers) {
     for (const tr of stagePb.auto_bundle.triggers) {

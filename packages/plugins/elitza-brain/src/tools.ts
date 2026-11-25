@@ -49,7 +49,6 @@ import {
 } from "./crm.js"
 import { scoutBusinesses, discoverEmail } from "./scouting.js"
 import { enrichClient } from "./enrichment.js"
-import { listWorksheets, recommendWorksheets, pullWorksheet, alreadyPulled, type Worksheet } from "./worksheets.js"
 import {
   addToPipeline,
   approveDrafts,
@@ -1424,70 +1423,6 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       },
     },
     {
-      name: "worksheets",
-      description:
-        "Internal CRM worksheet library: interactive, fillable templates pulled into a client's record. Operations: list (all available worksheets with tags), recommend (client_id — best-fit worksheets for that client), pull (client_id, worksheet_id — copy the worksheet into the client's pipeline folder and attach it as a 'worksheet' asset), pulled (client_id — worksheets already attached). Internal only, never sent to the client.",
-      input: {
-        type: "object",
-        properties: {
-          operation: {
-            type: "object",
-            properties: {
-              action: { type: "string", enum: ["list", "recommend", "pull", "pulled"], description: "Which operation." },
-              client_id: { type: "integer", description: "CRM client id." },
-              worksheet_id: { type: "string", description: "Worksheet id from list/recommend." },
-              limit: { type: "integer", description: "Max results (default 3)." },
-            },
-            required: ["action"],
-          },
-        },
-        required: ["operation"],
-      },
-      execute: async (input) => {
-        const op = (input.operation ?? {}) as Record<string, any>
-        const action = String(op.action ?? "")
-        try {
-          switch (action) {
-            case "list": {
-              const ws = listWorksheets()
-              if (!ws.length) return { content: "No worksheets available." }
-              return {
-                content: ws
-                  .map((w) => `${w.id} — ${w.title}${w.available ? "" : " (missing on disk)"} [${w.tags.join(", ")}]`)
-                  .join("\n"),
-              }
-            }
-            case "recommend": {
-              const client = getClient(Number(op.client_id))
-              if (!client) return { content: `No client with id ${op.client_id}.` }
-              const recs = recommendWorksheets(client, Number(op.limit ?? 3))
-              if (!recs.length) return { content: `No worksheets recommended for ${client.name}.` }
-              return {
-                content: recs
-                  .map((w) => `${w.id} — ${w.title} [${w.tags.join(", ")}]${alreadyPulled(client.id, w.id) ? " (already pulled)" : ""}`)
-                  .join("\n"),
-              }
-            }
-            case "pull": {
-              const res = pullWorksheet(Number(op.client_id), String(op.worksheet_id ?? ""))
-              return { content: `Pulled ${res.worksheet.title} for client ${op.client_id} → ${res.path} (asset ${res.asset_id}).` }
-            }
-            case "pulled": {
-              const client = getClient(Number(op.client_id))
-              if (!client) return { content: `No client with id ${op.client_id}.` }
-              const assets = listAssets(client.id).filter((a) => a.kind === "worksheet")
-              if (!assets.length) return { content: `No worksheets pulled for ${client.name}.` }
-              return { content: assets.map((a) => `${a.id}. ${a.name}${a.path ? ` ${a.path}` : ""}`).join("\n") }
-            }
-            default:
-              return { content: `Unknown worksheets action "${action}". Use one of: list, recommend, pull, pulled.` }
-          }
-        } catch (error) {
-          return { content: `Worksheets error: ${String(error)}` }
-        }
-      },
-    },
-    {
       name: "enrich_client",
       description:
         "Enrich a CRM client by scouting their own website: fetches the site, extracts contact details, calls the configured LLM with the diagnosis and proposal playbooks, and writes a one-page diagnosis + fixed-scope proposal (with a recommended price) back into the CRM (notes, interaction, diagnosis.md and proposal.md assets, next action). On success the client is moved to status 'enriched'. Works even without a website by scouting the location and web-searching the name. Use this before drafting a proposal, so you know exactly how to attack. Nothing is sent to the client.",
@@ -1629,8 +1564,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
       input: {
         type: "object",
         properties: {
-          type: { type: "string", description: "Filter by type (product, service, workflow, automation, template, worksheet, other)" },
-        },
+          type: { type: "string", description: "Filter by type (product, service, workflow, automation, template, other)" },        },
       },
       execute: async (input) => ({ content: JSON.stringify(listProducts(input.type), null, 2) }),
     },
@@ -1641,8 +1575,7 @@ export function makeBrainTools(ctx?: { generate: { text: (input: { prompt: strin
         type: "object",
         properties: {
           name: { type: "string", description: "Product name" },
-          type: { type: "string", description: "Type: product, service, workflow, automation, template, worksheet, other" },
-          description: { type: "string" },
+          type: { type: "string", description: "Type: product, service, workflow, automation, template, other" },          description: { type: "string" },
           price: { type: "number", description: "Price in EUR" },
           currency: { type: "string" },
           url: { type: "string" },
