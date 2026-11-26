@@ -169,10 +169,28 @@ export async function dispatchToTower(
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" }
     let isMach1 = false
-    try { isMach1 = !!cfg.webhookUrl && new URL(cfg.webhookUrl).hostname.endsWith("mach1ai.com") } catch {}
+    let machBot = ""
+    let machLabel = ""
+    let machEnv = ""
+    try {
+      if (cfg.webhookUrl) {
+        const u = new URL(cfg.webhookUrl)
+        isMach1 = u.hostname.endsWith("mach1ai.com")
+        machBot = u.searchParams.get("bot_identifier") || ""
+        machLabel = u.searchParams.get("label") || ""
+        machEnv = u.searchParams.get("environment") || ""
+      }
+    } catch {}
     if (cfg.webhookToken) {
       if (isMach1) headers["api-key"] = cfg.webhookToken
       else headers["Authorization"] = `Bearer ${cfg.webhookToken}`
+    }
+    // Mach 1 V3 required headers
+    if (isMach1) {
+      if (machBot) headers["bot-identifier"] = machBot
+      if (machEnv) headers["environment"] = machEnv
+      if (machLabel) headers["label"] = machLabel
+      headers["timezone"] = "Europe/Rome"
     }
     const res = await fetch(cfg.webhookUrl, {
       method: "POST",
