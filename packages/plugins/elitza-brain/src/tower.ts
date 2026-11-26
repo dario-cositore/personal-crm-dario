@@ -144,7 +144,7 @@ async function fetchHtmlRelaxed(url: string): Promise<{ ok: boolean; html: strin
       method: "GET",
       headers: BROWSER_HEADERS,
       dispatcher: relaxedAgent,
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(8000),
       redirect: "follow",
     })
     if (res.ok) {
@@ -159,12 +159,12 @@ async function fetchHtmlRelaxed(url: string): Promise<{ ok: boolean; html: strin
   // Stage 2: curl HTTP/1.1 fallback (15s, -k relaxed SSL)
   try {
     const { stdout } = await execFileAsync("curl", [
-      "-skL", "--http1.1", "--max-time", "15",
+      "-skL", "--http1.1", "--max-time", "8",
       "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "-H", "Accept-Language: it-IT,it;q=0.9,en;q=0.8",
       url,
-    ], { encoding: "utf8", timeout: 20000 })
+    ], { encoding: "utf8", timeout: 10000 })
     if (stdout && stdout.length >= 50) return { ok: true, html: stdout, status: 200 }
   } catch { /* fall through */ }
 
@@ -173,7 +173,7 @@ async function fetchHtmlRelaxed(url: string): Promise<{ ok: boolean; html: strin
     try {
       const { stdout } = await execFileAsync(BROWSER_BIN, ["--headless", "--no-sandbox", "--disable-gpu", "--dump-dom", url], {
         encoding: "utf8",
-        timeout: 15000,
+        timeout: 10000,
       })
       if (stdout && stdout.length >= 50) return { ok: true, html: stdout, status: 200 }
     } catch { /* fall through */ }
@@ -200,7 +200,7 @@ export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Pro
 
   const fetched: { url: string; text: string; html: string }[] = []
   const seen = new Set<string>()
-  const deadline = Date.now() + 25000
+  const deadline = Date.now() + 18000
 
   for (const url of candidateUrls) {
     if (Date.now() > deadline) break
@@ -209,7 +209,7 @@ export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Pro
     let key: string
     try {
       const u = new URL(url)
-      key = u.hostname + u.pathname.replace(/\/$/, "")
+      key = u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/$/, "")
     } catch { continue }
     if (seen.has(key)) continue
     seen.add(key)
