@@ -1120,8 +1120,14 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             } catch {}
           }
           const { dispatchToTower } = await import("./tower.js")
-          const r = await dispatchToTower(clientId, event as any, eventPayload)
-          return json(r, r.ok ? 200 : (r.skipped ? 200 : 400))
+          // Fire-and-forget: do not block the HTTP response on local scraping / webhook.
+          dispatchToTower(clientId, event as any, eventPayload).catch(async (e) => {
+            try {
+              const mod = await import("./tower.js")
+              mod.appendTowerConsole(clientId, "error", `Dispatch error: ${String(e)}`)
+            } catch {}
+          })
+          return json({ ok: true, started: true }, 202)
         }
         if (path === "/api/tower/callback") {
           if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405)
@@ -2138,9 +2144,34 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const rows = listPipeline({ limit: 200 }).filter((r) => r.draft_path)
           const drafts = rows.map((r) => {
             const c = getClient(r.client_id)
-            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, stage: r.stage }
+            let sent = false
+            try {
+              const fs = require("node:fs")
+              const txt = fs.readFileSync(r.draft_path as string, "utf8")
+              const m = txt.match(/^status:\s*(.+)$/m)
+              if (m && m[1].trim().toLowerCase() === "sent") sent = true
+            } catch {}
+            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, sent, stage: r.stage, touch: r.touch }
           })
           return json({ drafts })
+        }
+        if (path === "/api/drafts/clear-sent" && req.method === "POST") {
+          const rows = listPipeline({ limit: 200 }).filter((r) => r.draft_path)
+          let cleared = 0
+          for (const r of rows) {
+            let sent = false
+            try {
+              const fs = require("node:fs")
+              const txt = fs.readFileSync(r.draft_path as string, "utf8")
+              const m = txt.match(/^status:\s*(.+)$/m)
+              if (m && m[1].trim().toLowerCase() === "sent") sent = true
+            } catch {}
+            if (sent) {
+              crmDb().run("UPDATE pipeline SET draft_path = NULL, updated_at = ? WHERE id = ?", [new Date().toISOString(), r.id])
+              cleared++
+            }
+          }
+          return json({ ok: true, cleared })
         }
         if (path === "/api/approve" && req.method === "POST") {
           const body = await readBody(req)

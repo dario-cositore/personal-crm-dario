@@ -4697,13 +4697,31 @@ async function logNote(id) {
   await loadBoard(); openDetail(id);
 }
 
+async function renderQueueItem(d) {
+  const div = document.createElement('div'); div.className='queue-item';
+  div.innerHTML = '<div class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div>'
+    + '<div class="info"><div class="title"><a href="#" class="link">'+esc(d.client_name||'client '+d.client_id)+'</a></div><div class="meta">'+(d.path?'<a href="#" class="link" title="Open draft">'+esc(d.path)+'</a>':'')+'</div></div>'
+    + '<select onchange="selectOffer('+d.client_id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:11px"><option value="it_local_audit_150">it_local_audit_150</option><option value="it_local_micro_490">it_local_micro_490</option><option value="it_pmi_diagnosi_400">it_pmi_diagnosi_400</option><option value="it_pmi_track1_1500">it_pmi_track1_1500</option><option value="it_pmi_track1_2500">it_pmi_track1_2500</option><option value="it_pmi_track1_3500">it_pmi_track1_3500</option><option value="en_discovery_0">en_discovery_0</option><option value="en_track1_4000">en_track1_4000</option><option value="akli_addon">akli_addon</option><option value="track_2">track_2</option></select>'
+    + '<div class="actions"><button class="btn xs" onclick="editDraft('+d.id+')">Edit</button><button class="btn xs" onclick="approveOne('+d.id+')">Approve</button><button class="btn xs secondary" style="color:var(--err)" onclick="denyOne('+d.id+')">Deny</button><button class="btn xs secondary" onclick="sendOne('+d.id+')">Send</button></div>';
+  const titleLink = div.querySelector('.title a');
+  if (titleLink) titleLink.addEventListener('click', (e) => { e.preventDefault(); if (d.client_id) openDetail(d.client_id); });
+  const pathLink = div.querySelector('.meta a');
+  if (pathLink && d.path) pathLink.addEventListener('click', (e) => { e.preventDefault(); viewAsset(d.path, (d.client_name||'client '+d.client_id)+' — draft', 'draft'); });
+  return div;
+}
+
 async function loadQueue() {
   const body = document.getElementById('queueBody');
   body.innerHTML = '';
   let drafts;
   try { drafts = await api('/api/drafts'); }
   catch (e) { body.innerHTML = '<div class="empty-state"><h3>Failed to load</h3><p>'+esc(String(e))+'</p></div>'; return; }
-  if (!drafts.drafts || !drafts.drafts.length) {
+  const all = drafts.drafts || [];
+  const drafted = all.filter(d => !d.sent && !d.approved);
+  const approved = all.filter(d => !d.sent && d.approved);
+  const sentAll = all.filter(d => d.sent);
+  const sent = sentAll.slice(-20); // cap to avoid clogging; "Clear sent" removes them
+  if (!all.length) {
     const e = document.createElement('div'); e.className='empty-state';
     e.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><h3>Nothing to approve</h3><p>Drafts created via outreach will appear here. Run a scout, qualify a lead, and draft a first touch to get started.</p>';
     body.appendChild(e);
@@ -4711,25 +4729,44 @@ async function loadQueue() {
     return;
   }
   document.getElementById('queueBadge').style.display = 'inline-block';
-  document.getElementById('queueBadge').textContent = drafts.drafts.length;
-  for (const d of drafts.drafts) {
-    const div = document.createElement('div'); div.className='queue-item';
-    div.innerHTML = '<div class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div>'
-      + '<div class="info"><div class="title"><a href="#" class="link">'+esc(d.client_name||'client '+d.client_id)+'</a></div><div class="meta">'+(d.path?'<a href="#" class="link" title="Open draft">'+esc(d.path)+'</a>':'')+'</div></div>'
-      + '<select onchange="selectOffer('+d.client_id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:11px"><option value="it_local_audit_150">it_local_audit_150</option><option value="it_local_micro_490">it_local_micro_490</option><option value="it_pmi_diagnosi_400">it_pmi_diagnosi_400</option><option value="it_pmi_track1_1500">it_pmi_track1_1500</option><option value="it_pmi_track1_2500">it_pmi_track1_2500</option><option value="it_pmi_track1_3500">it_pmi_track1_3500</option><option value="en_discovery_0">en_discovery_0</option><option value="en_track1_4000">en_track1_4000</option><option value="akli_addon">akli_addon</option><option value="track_2">track_2</option></select>'
-      + '<div class="actions"><button class="btn xs" onclick="editDraft('+d.id+')">Edit</button><button class="btn xs" onclick="approveOne('+d.id+')">Approve</button><button class="btn xs secondary" style="color:var(--err)" onclick="denyOne('+d.id+')">Deny</button><button class="btn xs secondary" onclick="sendOne('+d.id+')">Send</button></div>';
-    const titleLink = div.querySelector('.title a');
-    if (titleLink) titleLink.addEventListener('click', (e) => { e.preventDefault(); if (d.client_id) openDetail(d.client_id); });
-    const pathLink = div.querySelector('.meta a');
-    if (pathLink && d.path) pathLink.addEventListener('click', (e) => { e.preventDefault(); viewAsset(d.path, (d.client_name||'client '+d.client_id)+' — draft', 'draft'); });
-    body.appendChild(div);
-  }
+  document.getElementById('queueBadge').textContent = drafted.length + approved.length;
+  const cols = document.createElement('div');
+  cols.style.display = 'grid';
+  cols.style.gridTemplateColumns = '1fr 1fr 1fr';
+  cols.style.gap = '12px';
+  cols.style.alignItems = 'start';
+  const makeCol = (title, items, emptyText, color) => {
+    const col = document.createElement('div');
+    col.className = 'section-card';
+    col.style.padding = '10px';
+    const h = document.createElement('h4'); h.style.margin = '0 0 8px'; h.style.display='flex'; h.style.alignItems='center'; h.style.gap='6px';
+    h.innerHTML = title + ' <span style="font-size:11px;color:var(--text-muted);font-weight:400">(' + items.length + ')</span>';
+    col.appendChild(h);
+    if (!items.length) {
+      const e = document.createElement('div'); e.className='empty-state'; e.style.padding='16px';
+      e.innerHTML = '<p style="font-size:12px;color:var(--text-muted);margin:0">' + emptyText + '</p>';
+      col.appendChild(e);
+    } else {
+      for (const d of items) col.appendChild(renderQueueItem(d));
+    }
+    return col;
+  };
+  cols.appendChild(makeCol('Drafted', drafted, 'No drafted emails.', 'var(--text-muted)'));
+  cols.appendChild(makeCol('Approved', approved, 'No approved emails.', 'var(--ok)'));
+  cols.appendChild(makeCol('Sent', sent, 'No sent emails.', 'var(--info)'));
+  body.appendChild(cols);
   const bar = document.createElement('div'); bar.style.marginTop='12px'; bar.style.display='flex'; bar.style.gap='8px';
-  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><!-- <button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button> --><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" id="sendAllBtn" disabled onclick="sendAll()">Send all approved</button>';
+  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><!-- <button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button> --><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" id="sendAllBtn" disabled onclick="sendAll()">Send all approved</button><button class="btn secondary" onclick="clearSentDrafts()" style="margin-left:auto">Clear sent</button>';
   body.appendChild(bar);
-  const hasApproved = (drafts.drafts || []).some(d => d.approved);
+  const hasApproved = approved.length > 0;
   const sendBtn = document.getElementById('sendAllBtn');
   if (sendBtn) { sendBtn.disabled = !hasApproved; sendBtn.style.opacity = hasApproved ? '1' : '0.4'; sendBtn.style.cursor = hasApproved ? 'pointer' : 'not-allowed'; }
+}
+
+async function clearSentDrafts() {
+  try { const r = await api('/api/drafts/clear-sent', { method:'POST' }); toast('Cleared ' + (r.cleared||0) + ' sent draft(s)', 'ok'); }
+  catch (e) { toast('Clear failed: ' + e, 'err'); }
+  loadQueue();
 }
 async function approveOne(id){ try { await api('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Approved','ok'); } catch(e){ toast('Approve failed: '+e,'err'); } loadQueue(); }
 async function denyOne(id){ try { await api('/api/deny',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Denied','ok'); } catch(e){ toast('Deny failed: '+e,'err'); } loadQueue(); }
