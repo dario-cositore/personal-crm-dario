@@ -26,13 +26,32 @@ import {
 import { serializeReadyLead } from "./crmview.js"
 
 describe("Hard Email Routing Gate", () => {
-  test("blocks privacy@, dpo@, rpd@, gdpr@, amministrazione@, postecert.it, and external DPO domains", () => {
+  test("blocks privacy@, dpo@, rpd@, gdpr@, postecert.it, and external DPO domains; allows amministrazione@, direzione@, ufficio@", () => {
     expect(isSendableOutreachEmail("privacy@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("dpo@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
-    expect(isSendableOutreachEmail("amministrazione@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("legale@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("legal@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("fatturazione@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("contabilita@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("noreply@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("no-reply@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    // PEC locals
+    expect(isPecEmail("pec@studiorossi.it")).toBe(true)
+    expect(isPecEmail("postacertificata@studiorossi.it")).toBe(true)
+    expect(isPecEmail("certificata@studiorossi.it")).toBe(true)
+    expect(isSendableOutreachEmail("pec@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("certificata@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isPecEmail("studiorossi@postecert.it")).toBe(true)
     expect(isSendableOutreachEmail("studiorossi@postecert.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isPecEmail("info@studio.pec.it")).toBe(true)
+    expect(isPecEmail("info@legalmail.it")).toBe(true)
+    expect(isPecEmail("info@arubapec.it")).toBe(true)
+    expect(isPecEmail("info@telecompost.it")).toBe(true)
     expect(isSendableOutreachEmail("avv.bianchi@studiolegaleesterno.it", { website: "clinicarossi.it" })).toBe(false)
+    // newly allowed B2B local parts
+    expect(isSendableOutreachEmail("amministrazione@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("direzione@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("ufficio@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
   })
 
   test("ranks direct_person > front_desk > generic_info", () => {

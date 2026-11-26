@@ -23,7 +23,7 @@ export const PEC_DOMAIN_TOKENS = [
 "odcec",
 ]
 
-const PEC_LOCAL_EXACT = new Set(["pec", "postacertificata", "posta-certificata"])
+const PEC_LOCAL_EXACT = new Set(["pec", "postacertificata", "posta-certificata", "certificata"])
 
 const JUNK_OR_AGENCY_TOKENS = [
   "example.",
@@ -63,7 +63,6 @@ const BLOCKED_LEGAL_ADMIN_PREFIXES = [
 "protezionedati",
 "protezione-dati",
 "titolaretrattamento",
-"amministrazione",
 "admin",
 "contabilita",
 "fatture",
@@ -91,6 +90,7 @@ const BLOCKED_LEGAL_ADMIN_PREFIXES = [
 "ufficiolegale",
 "ufficio.legale",
 "legal",
+"legale",
 "abuse",
 "security",
 "noreply",
@@ -134,6 +134,7 @@ const GENERIC_INFO_PREFIXES = [
 "ufficio",
 "sede",
 "direzione",
+"amministrazione",
 ]
 
 export const FREE_WEBMAIL_DOMAINS = new Set([
