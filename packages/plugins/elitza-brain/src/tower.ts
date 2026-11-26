@@ -15,6 +15,8 @@
 import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
+import { execFileSync } from "node:child_process"
+import { Agent, fetch as undiciFetch } from "undici"
 import { AI_ENABLEMENT_HOME, nowISO } from "./db.js"
 import {
   crmDb,
@@ -115,18 +117,76 @@ export interface ScrapeResult {
   extracted_emails: string[]
 }
 
+const relaxedAgent = new Agent({ connect: { rejectUnauthorized: false } })
+
+const BROWSER_BIN = (() => {
+  for (const b of ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"]) {
+    try {
+      execFileSync("which", [b], { stdio: "ignore" })
+      return b
+    } catch { /* not found */ }
+  }
+  return null
+})()
+
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+}
+
+async function fetchHtmlRelaxed(url: string): Promise<{ ok: boolean; html: string; status: number }> {
+  // Stage 1: undici with relaxed SSL + Chrome headers (12s)
+  try {
+    const res = await undiciFetch(url, {
+      method: "GET",
+      headers: BROWSER_HEADERS,
+      dispatcher: relaxedAgent,
+      signal: AbortSignal.timeout(12000),
+      redirect: "follow",
+    })
+    if (res.ok) {
+      const ct = res.headers.get("content-type") || ""
+      if (ct.includes("text/html") || ct.includes("text/plain")) {
+        const html = await res.text()
+        if (html && html.length >= 50) return { ok: true, html, status: res.status }
+      }
+    }
+  } catch { /* fall through */ }
+
+  // Stage 2: curl HTTP/1.1 fallback (15s, -k relaxed SSL)
+  try {
+    const out = execFileSync("curl", [
+      "-skL", "--http1.1", "--max-time", "15",
+      "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-H", "Accept-Language: it-IT,it;q=0.9,en;q=0.8",
+      url,
+    ], { encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "ignore"] })
+    if (out && out.length >= 50) return { ok: true, html: out, status: 200 }
+  } catch { /* fall through */ }
+
+  // Stage 3: headless browser dump-dom (15s)
+  if (BROWSER_BIN) {
+    try {
+      const out = execFileSync(BROWSER_BIN, ["--headless", "--no-sandbox", "--disable-gpu", "--dump-dom", url], {
+        encoding: "utf8",
+        timeout: 15000,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+      if (out && out.length >= 50) return { ok: true, html: out, status: 200 }
+    } catch { /* fall through */ }
+  }
+
+  return { ok: false, html: "", status: 0 }
+}
+
 export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Promise<ScrapeResult> {
   const result: ScrapeResult = { fetch_ok: false, site_text: "", pages_fetched: [], extracted_emails: [] }
   if (!rawUrl) return result
   let host = String(rawUrl).trim()
   host = host.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].toLowerCase()
   if (!host || host.includes(" ")) return result
-
-  const browserHeaders = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
-  }
 
   // candidate urls: homepage variants first, then internal slugs
   const candidateUrls: string[] = []
@@ -151,16 +211,9 @@ export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Pro
     if (seen.has(key)) continue
     seen.add(key)
     try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: browserHeaders,
-        signal: AbortSignal.timeout(12000),
-        redirect: "follow",
-      })
-      if (!res.ok) continue
-      const ct = res.headers.get("content-type") || ""
-      if (!ct.includes("text/html") && !ct.includes("text/plain")) continue
-      const html = await res.text()
+      const r = await fetchHtmlRelaxed(url)
+      if (!r.ok) continue
+      const html = r.html
       const text = stripHtmlToText(html)
       if (text.length < 50) continue
       fetched.push({ url, text, html })
