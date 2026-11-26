@@ -4039,6 +4039,9 @@ function toast(msg, kind, action) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 5000);
 }
+function toastGoToClient() {
+  if (window._toastClientId) { openDetail(window._toastClientId); }
+}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -4718,6 +4721,7 @@ async function loadQueue() {
   try { drafts = await api('/api/drafts'); }
   catch (e) { body.innerHTML = '<div class="empty-state"><h3>Failed to load</h3><p>'+esc(String(e))+'</p></div>'; return; }
   const all = drafts.drafts || [];
+  window._queueDrafts = all;
   const drafted = all.filter(d => !d.approved);
   const approved = all.filter(d => d.approved);
   if (!all.length) {
@@ -4763,12 +4767,18 @@ async function loadQueue() {
 
 async function approveOne(id){ try { await api('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Approved','ok'); } catch(e){ toast('Approve failed: '+e,'err'); } loadQueue(); }
 async function denyOne(id){ try { await api('/api/deny',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Denied','ok'); } catch(e){ toast('Deny failed: '+e,'err'); } loadQueue(); }
-async function sendOne(id){ try { const r = await api('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Sent '+ (Array.isArray(r.sent)?r.sent.length:r.sent) +' draft(s)','ok'); } catch(e){ toast('Send failed: '+e,'err'); } loadQueue(); loadBoard(); }
+async function sendOne(id){
+  const drafts = (window._queueDrafts || []);
+  const d = drafts.find(x => x.id === id);
+  const clientId = d ? d.client_id : null;
+  try { const r = await api('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); window._toastClientId = clientId; toast('Sent '+ (Array.isArray(r.sent)?r.sent.length:r.sent) +' draft(s)','ok', clientId ? { label: 'View client', onClick: 'toastGoToClient' } : null); } catch(e){ toast('Send failed: '+e,'err'); }
+  loadQueue(); loadBoard();
+}
 async function batchDraft(){ try { const r = await api('/api/outreach/batch-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:50})}); toast('Drafted '+(r.drafted?r.drafted.length:0)+' (skipped '+(r.skipped?r.skipped.length:0)+', failed '+(r.failed?r.failed.length:0)+')','ok'); loadQueue(); } catch(e){ toast('Batch draft failed: '+e,'err'); } }
 async function runOutboundTick(){ try { const r = await api('/api/outbound/run-tick',{method:'POST'}); toast('Tick: scouted '+r.scouted+' enriched '+r.enriched+' drafted '+r.drafted+' (skipped '+(r.skipped||'')+')','ok'); loadQueue(); } catch(e){ toast('Run tick failed: '+e,'err'); } }
 async function approveAll(){ const d = await api('/api/drafts'); const ids = (d.drafts||[]).map(x=>x.id); if(!ids.length){toast('Nothing to approve','warn');return;} await api('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); toast('Approved '+ids.length,'ok'); loadQueue(); }
 async function denyAll(){ const d = await api('/api/drafts'); const ids = (d.drafts||[]).map(x=>x.id); if(!ids.length){toast('Nothing to deny','warn');return;} await api('/api/deny',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})}); toast('Denied '+ids.length,'ok'); loadQueue(); }
-async function sendAll(){ try { const r = await api('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}); toast('Sent '+ (Array.isArray(r.sent)?r.sent.length:r.sent) +' draft(s)','ok'); } catch(e){ toast('Send failed: '+e,'err'); } loadQueue(); loadBoard(); }
+async function sendAll(){ try { const r = await api('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})}); const sentIds = Array.isArray(r.sent) ? r.sent : []; const drafts = window._queueDrafts || []; let cid = null; for (const pid of sentIds) { const d = drafts.find(x => x.id === pid); if (d && d.client_id) { cid = d.client_id; break; } } window._toastClientId = cid; toast('Sent '+ (Array.isArray(r.sent)?r.sent.length:r.sent) +' draft(s)','ok', cid ? { label: 'View client', onClick: 'toastGoToClient' } : null); } catch(e){ toast('Send failed: '+e,'err'); } loadQueue(); loadBoard(); }
 
 function scoutLog(msg, kind) {
   const box = document.getElementById('scoutActivity');
