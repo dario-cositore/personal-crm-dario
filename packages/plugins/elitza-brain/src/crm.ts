@@ -1280,6 +1280,9 @@ export function updateClient(id: number, patch: ClientPatch): Client | null {
     fields.push(`${key} = ?`)
     params.push(patch[key] ?? null)
   }
+  if (patch.status) {
+    ensureStageExists(String(patch.status))
+  }
   if (!fields.length) return client
   fields.push("updated_at = ?")
   params.push(nowISO(), id)
@@ -1538,6 +1541,26 @@ export function configuredStageIds(): string[] {
 
 export function stageExists(id: string): boolean {
   return configuredStageIds().includes(id)
+}
+
+export function ensureStageExists(id: string): void {
+  if (!id || !id.trim()) return
+  if (stageExists(id)) return
+  try {
+    const fs = require("node:fs")
+    const path = require("node:path")
+    const home = (process.env.AI_ENABLEMENT_HOME ?? process.env.ELITZA_HOME) || ((process.env.HOME || "") + "/.ai-enablement-agent")
+    const file = path.join(home, "pipeline-stages.json")
+    let stages: any[] = []
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
+      if (Array.isArray(parsed)) stages = parsed
+    } catch { /* no file or invalid */ }
+    if (!stages.some((s: any) => String(s?.id) === id)) {
+      stages.push({ id, label: id, color: "#62666d", statusColor: "muted" })
+      fs.writeFileSync(file, JSON.stringify(stages, null, 2), { mode: 0o600 })
+    }
+  } catch { /* best effort */ }
 }
 
 export function firstConfiguredStage(): string {

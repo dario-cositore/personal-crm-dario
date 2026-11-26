@@ -539,7 +539,7 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
        WHERE id = ?`,
       [touch, stage, sentAt, nextTouchAt, sentAt, pipelineRow.id],
     )
-    updateClient(pipelineRow.client_id, { ...(stageExists(stage) ? { status: stage } : {}), last_contact: sentAt })
+    updateClient(pipelineRow.client_id, { status: stage, last_contact: sentAt })
     logInteraction(pipelineRow.client_id, {
       kind: touch === 1 ? "first_touch" : `followup_${touch - 1}`,
       direction: "out",
