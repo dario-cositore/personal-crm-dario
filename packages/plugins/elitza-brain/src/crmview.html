@@ -489,14 +489,15 @@ setTimeout(updateNavToggleLabel, 150);
   .timeline-item .subject { color: var(--text); font-size: 12px; margin-bottom: 2px; font-weight: 500; }
 
   /* Queue */
-  .queue-list { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+  .queue-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
   .queue-item {
     background: var(--bg-panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    padding: 14px 16px;
-    display: flex; align-items: center; gap: 14px;
+    padding: 16px 20px;
+    display: flex; align-items: center; gap: 16px;
     transition: border-color var(--transition);
+    min-width: 0;
   }
   .queue-item:hover { border-color: var(--border-strong); }
   .queue-item .icon {
@@ -507,9 +508,10 @@ setTimeout(updateNavToggleLabel, 150);
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
-  .queue-item .info { flex: 1; min-width: 0; }
+  .queue-item .info { flex: 1; min-width: 0; overflow: hidden; }
   .queue-item .title { font-size: 13px; font-weight: 500; letter-spacing: -0.01em; }
-  .queue-item .meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; font-family: var(--mono); }
+  .queue-item .meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .queue-item .meta a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
   .queue-item .actions { display: flex; gap: 6px; flex-shrink: 0; }
 
   /* Scout */
@@ -4699,7 +4701,7 @@ async function logNote(id) {
 function renderQueueItem(d) {
   const div = document.createElement('div'); div.className='queue-item';
   div.innerHTML = '<div class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div>'
-    + '<div class="info"><div class="title"><a href="#" class="link">'+esc(d.client_name||'client '+d.client_id)+'</a></div><div class="meta">'+(d.path?'<a href="#" class="link" title="Open draft">'+esc(d.path)+'</a>':'')+'</div></div>'
+    + '<div class="info"><div class="title"><a href="#" class="link">'+esc(d.client_name||'client '+d.client_id)+'</a></div><div class="meta">'+(d.path?'<a href="#" class="link" title="'+esc(d.path)+'">'+esc(d.path.split('/').pop())+'</a>':'')+'</div></div>'
     + '<select onchange="selectOffer('+d.client_id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:11px"><option value="it_local_audit_150">it_local_audit_150</option><option value="it_local_micro_490">it_local_micro_490</option><option value="it_pmi_diagnosi_400">it_pmi_diagnosi_400</option><option value="it_pmi_track1_1500">it_pmi_track1_1500</option><option value="it_pmi_track1_2500">it_pmi_track1_2500</option><option value="it_pmi_track1_3500">it_pmi_track1_3500</option><option value="en_discovery_0">en_discovery_0</option><option value="en_track1_4000">en_track1_4000</option><option value="akli_addon">akli_addon</option><option value="track_2">track_2</option></select>'
     + '<div class="actions"><button class="btn xs" onclick="editDraft('+d.id+')">Edit</button><button class="btn xs" onclick="approveOne('+d.id+')">Approve</button><button class="btn xs secondary" style="color:var(--err)" onclick="denyOne('+d.id+')">Deny</button><button class="btn xs secondary" onclick="sendOne('+d.id+')">Send</button></div>';
   const titleLink = div.querySelector('.title a');
