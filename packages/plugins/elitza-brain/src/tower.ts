@@ -55,6 +55,125 @@ const VALID_EVENTS: TowerEvent[] = [
   "job_done_paid",
 ]
 
+// ---- local website scraping (pre-scrape for Tower) ----
+const SCRAPE_SLUGS = ["contatti", "sede-e-contatti", "contact", "chi-siamo", "lo-studio", "team", "servizi", "prestazioni"]
+const SCRAPE_ALLOWED_EMAIL_LOCALS = new Set(["info", "segreteria", "contatti", "studio", "amministrazione"])
+const SCRAPE_BLOCKED_PATHS = ["/alid/v1/widget.js", "/intake/", "/checkout", "/payment", "/pay", "waffo", "paypal"]
+
+function scrapeBlockedUrl(url: string): boolean {
+  const lower = url.toLowerCase()
+  return SCRAPE_BLOCKED_PATHS.some((p) => lower.includes(p))
+}
+
+function stripHtmlToText(html: string): string {
+  let t = html
+  // remove scripts and styles
+  t = t.replace(/<script[\s\S]*?<\/script>/gi, " ")
+  t = t.replace(/<style[\s\S]*?<\/style>/gi, " ")
+  t = t.replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+  // remove tags
+  t = t.replace(/<[^>]+>/g, " ")
+  // decode common entities
+  t = t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  // collapse whitespace
+  t = t.replace(/\s+/g, " ").trim()
+  return t
+}
+
+function extractAllowedEmails(text: string): string[] {
+  const found = new Set<string>()
+  const re = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const email = m[0].toLowerCase()
+    const local = email.split("@")[0]
+    if (SCRAPE_ALLOWED_EMAIL_LOCALS.has(local)) found.add(email)
+  }
+  return [...found]
+}
+
+export interface ScrapeResult {
+  fetch_ok: boolean
+  site_text: string
+  pages_fetched: number
+  extracted_emails: string[]
+}
+
+export async function scrapeSite(website: string | null | undefined): Promise<ScrapeResult> {
+  const result: ScrapeResult = { fetch_ok: false, site_text: "", pages_fetched: 0, extracted_emails: [] }
+  if (!website) return result
+  let host = String(website).trim()
+  host = host.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].toLowerCase()
+  if (!host || host.includes(" ")) return result
+
+  const urlsToTry: string[] = []
+  // homepage variants
+  urlsToTry.push(`https://www.${host}`)
+  urlsToTry.push(`https://${host}`)
+  // internal pages
+  for (const slug of SCRAPE_SLUGS) {
+    urlsToTry.push(`https://www.${host}/${slug}`)
+    urlsToTry.push(`https://${host}/${slug}`)
+  }
+
+  const fetchedTexts: string[] = []
+  const allEmails = new Set<string>()
+  let pagesFetched = 0
+  const seenHosts = new Set<string>()
+
+  for (const url of urlsToTry) {
+    if (result.site_text.length >= 20000) break
+    if (scrapeBlockedUrl(url)) continue
+    // dedupe by normalized url
+    try {
+      const u = new URL(url)
+      const key = u.hostname + u.pathname
+      if (seenHosts.has(key)) continue
+      seenHosts.add(key)
+    } catch { continue }
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; ElitzaCRM/1.0)" },
+        signal: AbortSignal.timeout(8000),
+        redirect: "follow",
+      })
+      if (!res.ok) continue
+      const ct = res.headers.get("content-type") || ""
+      if (!ct.includes("text/html") && !ct.includes("text/plain")) continue
+      const html = await res.text()
+      const text = stripHtmlToText(html)
+      if (text.length < 50) continue
+      pagesFetched++
+      fetchedTexts.push(text)
+      for (const e of extractAllowedEmails(text)) allEmails.add(e)
+      // extract emails from mailto: links in raw html
+      const mailtoRe = /mailto:([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
+      let mm: RegExpExecArray | null
+      while ((mm = mailtoRe.exec(html)) !== null) {
+        const em = mm[1].toLowerCase()
+        const local = em.split("@")[0]
+        if (SCRAPE_ALLOWED_EMAIL_LOCALS.has(local)) allEmails.add(em)
+      }
+    } catch {
+      // ignore fetch errors, try next
+    }
+  }
+
+  // Build combined text up to 20000 chars, homepage first
+  let combined = ""
+  for (const t of fetchedTexts) {
+    if (combined.length >= 20000) break
+    const remaining = 20000 - combined.length
+    combined += (combined ? "\n\n" : "") + t.slice(0, remaining)
+  }
+  result.site_text = combined
+  result.pages_fetched = pagesFetched
+  result.extracted_emails = [...allEmails]
+  result.fetch_ok = pagesFetched > 0
+  return result
+}
+
 export interface TowerConfig {
   webhookUrl: string | null
   webhookToken: string | null
@@ -165,7 +284,24 @@ export async function dispatchToTower(
   if (!cfg.webhookUrl) {
     return { ok: false, skipped: true, reason: "TOWER_WEBHOOK_URL not configured" }
   }
-  const payload = buildTowerPayload(clientId, event, eventPayload)
+  // Pre-scrape the client's website locally (for outbound_prep) so Tower gets
+  // clean text even when Italian hosting firewalls block cloud IPs.
+  let finalEventPayload = eventPayload ? { ...eventPayload } : {}
+  if (event === "outbound_prep") {
+    const client = getClient(clientId)
+    if (client?.website) {
+      const scraped = await scrapeSite(client.website)
+      finalEventPayload.scraped_site_text = scraped.site_text
+      finalEventPayload.scraped_pages_fetched = scraped.pages_fetched
+      finalEventPayload.scraped_emails = scraped.extracted_emails
+      if (!scraped.fetch_ok) finalEventPayload.scraped_site_text = ""
+    } else {
+      finalEventPayload.scraped_site_text = ""
+      finalEventPayload.scraped_pages_fetched = 0
+      finalEventPayload.scraped_emails = []
+    }
+  }
+  const payload = buildTowerPayload(clientId, event, finalEventPayload)
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" }
     let isMach1 = false
@@ -380,6 +516,13 @@ export async function handleTowerCallback(
           status: "draft",
         })
         return { ok: true, status: 200, result: { thank_you_id: ty.id, referrer_id: referrer.id } }
+      }
+      case "scrape_site": {
+        const url = String(body.url ?? "").trim()
+        if (!url) return { ok: false, status: 400, error: "url required" }
+        if (scrapeBlockedUrl(url)) return { ok: false, status: 400, error: "url blocked" }
+        const scraped = await scrapeSite(url)
+        return { ok: true, status: 200, result: { fetch_ok: scraped.fetch_ok, site_text: scraped.site_text, pages_fetched: scraped.pages_fetched, extracted_emails: scraped.extracted_emails } }
       }
       default:
         return { ok: false, status: 400, error: `unknown action ${action}` }
