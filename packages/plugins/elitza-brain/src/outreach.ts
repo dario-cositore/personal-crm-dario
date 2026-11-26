@@ -37,7 +37,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { AI_ENABLEMENT_HOME, nowISO } from "./db.js"
-import { crmDb, getClient, logInteraction, updateClient, stageExists } from "./crm.js"
+import { crmDb, getClient, getCustomFields, logInteraction, updateClient, stageExists } from "./crm.js"
 import { routeClientTrack } from "./routing.js"
 import { soulGet } from "./soul.js"
 import { slug } from "./pipeline.js"
@@ -79,10 +79,10 @@ function resolveSender(input: string | undefined): string {
   }
   return fallback
 }
-export const CADENCE_DAYS = [3, 7, 14]
+export const CADENCE_DAYS = [3, 4]
 
 /** Stage reached once touch n has gone out. */
-const TOUCH_STAGES = ["contacted", "followup_1", "followup_2", "followup_3"]
+const TOUCH_STAGES = ["contacted", "followup_1", "followup_2"]
 
 export interface OutreachRow {
   id: number
@@ -296,7 +296,7 @@ export function writeDraft(
 
   const { row: pipelineRow } = addToPipeline(clientId)
   const touch = pipelineRow.touch + 1
-  if (touch > 4) throw new Error("The 4-touch cadence is already complete for this client.")
+  if (touch > 3) throw new Error("The 3-touch cadence is already complete for this client.")
 
   const cleanBodyInput = sanitizeDraftBody(stripFooter(input.body.trim()), client.language)
   const sanitized = validateAndSanitizeDraft({ subject, body: cleanBodyInput }, client, touch)
@@ -513,8 +513,8 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
     // Cadence guard: never send a follow-up before its scheduled due date,
     // and never send beyond the 4-touch cadence.
     const nextTouch = pipelineRow.touch + 1
-    if (nextTouch > 4) {
-      result.failed.push({ id: pipelineRow.id, reason: "cadence complete (4/4 touches already sent)" })
+    if (nextTouch > 3) {
+      result.failed.push({ id: pipelineRow.id, reason: "cadence complete (3/3 touches already sent)" })
       continue
     }
     if (nextTouch > 1 && pipelineRow.next_touch_at) {
@@ -621,7 +621,7 @@ export function listDue(now = nowISO(), limit = 20): OutreachRow[] {
     `SELECT * FROM pipeline
        WHERE next_touch_at IS NOT NULL
          AND next_touch_at <= ?
-         AND touch < 4
+         AND touch < 3
          AND queued_touch <= touch
          AND stage NOT IN (${TERMINAL_STAGES.map(() => "?").join(",")})
        ORDER BY next_touch_at
@@ -660,7 +660,44 @@ export function queueFollowups(now = nowISO()): FollowupQueue {
       }
     }
     try {
-      const { filePath, row } = writeDraft(pipelineRow.client_id, followupCopy(pipelineRow, client.name, client.language))
+      const nextTouch = pipelineRow.touch + 1
+      const cf = getCustomFields(pipelineRow.client_id)
+      const touchpoint = (cf.touchpoint || cf.pain_category || "richieste dal sito").trim() || "richieste dal sito"
+      const previous = pipelineRow.draft_path ? readDraft(pipelineRow.draft_path) : null
+      const topic = previous?.subject.replace(/^\\s*re:\\s*/i, "").trim() ?? ""
+      const fallbackSubject = (client.language === "it")
+        ? `${client.name}: vale una breve chiamata?`
+        : `${client.name}: still worth a conversation?`
+      const subject = topic ? `Re: ${topic}` : fallbackSubject
+
+      let body = ""
+      if (nextTouch === 2) {
+        body = `Buongiorno, riprendo brevemente il messaggio qui sotto.
+
+So che tra appuntamenti e telefonate la settimana corre veloce. Ti scrivo solo per capire se la gestione di ${touchpoint} è già coperta dal vostro team o se capita che qualche richiesta resti indietro nei momenti di picco.
+
+Se ti va di confrontarci 10 minuti questa settimana, fammi pure sapere quando sei più comodo. Altrimenti nessun problema.
+
+Un saluto,
+
+Dario Cositore
+Sistemi IA & Operatività
+Castelleone (CR) / Milano | [dariocositore.com/it](https://dariocositore.com/it)`
+      } else if (nextTouch === 3) {
+        body = `Buongiorno, ultimo messaggio da parte mia su questo tema così non ti intaso la casella.
+
+Immagino che al momento abbiate altre priorità operative, quindi chiudo qui il promemoria. Se nei prossimi mesi volessi snellire la gestione delle richieste in entrata senza cambiare gli strumenti che usate già, mi trovi qui.
+
+Buon lavoro,
+
+Dario Cositore
+Sistemi IA & Operatività
+Castelleone (CR) / Milano | [dariocositore.com/it](https://dariocositore.com/it)`
+      } else {
+        throw new Error("No deterministic template for touch " + nextTouch)
+      }
+
+      const { filePath, row } = writeDraft(pipelineRow.client_id, { subject, body })
       result.queued.push({
         pipeline_id: row.id,
         client_id: row.client_id,
@@ -767,7 +804,7 @@ export function variantStats(): { variant: string | null; sent: number; replied:
 export function sweepExhausted(now = nowISO()): OutreachRow[] {
   const exhausted = rows<OutreachRow>(
     `SELECT * FROM pipeline
-       WHERE touch >= 4
+       WHERE touch >= 3
          AND next_touch_at IS NULL
          AND stage NOT IN (${TERMINAL_STAGES.map(() => "?").join(",")})
        ORDER BY id`,
@@ -784,7 +821,7 @@ export function sweepExhausted(now = nowISO()): OutreachRow[] {
       direction: "note",
       channel: "note",
       status: "stale",
-      subject: "4 touches, no reply",
+      subject: "3 touches, no reply",
       occurred_at: now,
     })
     debugSweep(pipelineRow.id)

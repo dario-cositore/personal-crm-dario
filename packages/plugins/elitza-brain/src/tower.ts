@@ -485,16 +485,23 @@ export async function dispatchToTower(
   eventPayload?: Record<string, unknown>,
 ): Promise<DispatchResult> {
   const cfg = towerConfig()
-  if (!cfg.webhookUrl) {
-    return { ok: false, skipped: true, reason: "TOWER_WEBHOOK_URL not configured" }
-  }
-  // Reset console for this run
+  // Reset console for this run and announce immediately
   const consoleState = getConsole(clientId)
   consoleState.active = true
   consoleState.status = "running"
   consoleState.execution_id = null
   consoleState.lines = []
   consoleState.startedAt = Date.now()
+  try {
+    const c = getClient(clientId)
+    pushConsole(clientId, "info", `Starting ${event} for ${c?.name ?? clientId}...`)
+  } catch { pushConsole(clientId, "info", `Starting ${event}...`) }
+
+  if (!cfg.webhookUrl) {
+    pushConsole(clientId, "error", "TOWER_WEBHOOK_URL not configured")
+    const st = getConsole(clientId); st.active = false; st.status = "failed"
+    return { ok: false, skipped: true, reason: "TOWER_WEBHOOK_URL not configured" }
+  }
 
   // Pre-scrape the client's website locally (for outbound_prep) so Tower gets
   // clean text even when Italian hosting firewalls block cloud IPs.
@@ -549,6 +556,10 @@ export async function dispatchToTower(
       if (machEnv) headers["environment"] = machEnv
       if (machLabel) headers["label"] = machLabel
       headers["timezone"] = "Europe/Rome"
+    }
+    // Pin workflow_code_id on outbound_prep so Mach 1 skips tc_selector routing
+    if (event === "outbound_prep") {
+      headers["workflow-code-id"] = "4f78f1f6-62bb-4622-a032-8589b729d449"
     }
     const res = await fetch(cfg.webhookUrl, {
       method: "POST",

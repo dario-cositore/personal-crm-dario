@@ -1288,6 +1288,16 @@ export function updateClient(id: number, patch: ClientPatch): Client | null {
   params.push(nowISO(), id)
   crmDb().run(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`, params)
   logAudit("client", id, "updated", JSON.stringify(patch))
+
+  // Reply / opt-out guard: cancel follow-up cadence for terminal statuses.
+  const terminalStatuses = new Set(["replied", "booked", "won", "lost", "opted_out", "yes", "no", "stale", "done"])
+  if (patch.status && terminalStatuses.has(String(patch.status))) {
+    try {
+      crmDb().run("UPDATE pipeline SET next_touch_at = NULL, queued_touch = 0, updated_at = ? WHERE client_id = ?", [nowISO(), id])
+      // cancel unapproved follow-up drafts
+      crmDb().run("UPDATE pipeline SET draft_path = NULL WHERE client_id = ? AND approved = 0", [id])
+    } catch { /* best effort */ }
+  }
   return getClient(id)
 }
 

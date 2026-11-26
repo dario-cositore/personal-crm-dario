@@ -26,13 +26,17 @@ import {
 import { serializeReadyLead } from "./crmview.js"
 
 describe("Hard Email Routing Gate", () => {
-  test("blocks privacy@, dpo@, rpd@, gdpr@, postecert.it, and external DPO domains; allows amministrazione@, direzione@, ufficio@", () => {
+  test("blocks hard-blocked addresses; allows amministrazione/direzione/ufficio and other non-blocked", () => {
+    // hard-blocked: legal & privacy
     expect(isSendableOutreachEmail("privacy@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("dpo@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("gdpr@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("legale@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("legal@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    // hard-blocked: invoicing & unmonitored
+    expect(isSendableOutreachEmail("fatture@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("fatturazione@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
-    expect(isSendableOutreachEmail("contabilita@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
+    expect(isSendableOutreachEmail("sdi@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("noreply@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     expect(isSendableOutreachEmail("no-reply@studiorossi.it", { website: "studiorossi.it" })).toBe(false)
     // PEC locals
@@ -47,11 +51,18 @@ describe("Hard Email Routing Gate", () => {
     expect(isPecEmail("info@legalmail.it")).toBe(true)
     expect(isPecEmail("info@arubapec.it")).toBe(true)
     expect(isPecEmail("info@telecompost.it")).toBe(true)
+    // external DPO domain
     expect(isSendableOutreachEmail("avv.bianchi@studiolegaleesterno.it", { website: "clinicarossi.it" })).toBe(false)
-    // newly allowed B2B local parts
+    // newly allowed (fallback tier + B2B)
     expect(isSendableOutreachEmail("amministrazione@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
     expect(isSendableOutreachEmail("direzione@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
     expect(isSendableOutreachEmail("ufficio@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("marketing@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("commerciale@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("vendite@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("lavoraconnoi@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("hr@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
+    expect(isSendableOutreachEmail("candidature@studiorossi.it", { website: "studiorossi.it" })).toBe(true)
   })
 
   test("ranks direct_person > front_desk > generic_info", () => {
