@@ -510,6 +510,15 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
       result.failed.push({ id: pipelineRow.id, reason: "draft file missing or unreadable" })
       continue
     }
+    // Cadence guard: never send a follow-up before its scheduled due date.
+    const nextTouch = pipelineRow.touch + 1
+    if (nextTouch > 1 && pipelineRow.next_touch_at) {
+      const due = Date.parse(pipelineRow.next_touch_at)
+      if (Number.isFinite(due) && Date.now() < due) {
+        result.failed.push({ id: pipelineRow.id, reason: "cadence not due until " + pipelineRow.next_touch_at })
+        continue
+      }
+    }
     const clientForGate = getClient(pipelineRow.client_id)
     if (!EMAIL_ADDRESS.test(draft.to) || !isSendableOutreachEmail(draft.to, { website: clientForGate?.website, businessName: clientForGate?.name })) {
       result.failed.push({ id: pipelineRow.id, reason: `recipient blocked by email routing gate (${draft.to || "empty"})` })
@@ -534,8 +543,10 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
     const nextTouchAt = dueIn
       ? new Date(Date.parse(sentAt) + dueIn * 86_400_000).toISOString()
       : null
+    // Auto-archive the sent draft: null draft_path so it leaves the approval queue.
+    // The sent record survives in the interaction log and on disk (markSent).
     crmDb().run(
-      `UPDATE pipeline SET touch = ?, stage = ?, approved = 0, queued_touch = 0, last_touch_at = ?, next_touch_at = ?, updated_at = ?
+      `UPDATE pipeline SET touch = ?, stage = ?, approved = 0, queued_touch = 0, draft_path = NULL, last_touch_at = ?, next_touch_at = ?, updated_at = ?
        WHERE id = ?`,
       [touch, stage, sentAt, nextTouchAt, sentAt, pipelineRow.id],
     )
