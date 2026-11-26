@@ -44,6 +44,7 @@ try {
 
 const DEFAULT_STAGES = [
   { id: "scouted", label: "Scouted", color: "#62666d", statusColor: "muted" },
+  { id: "manual_check", label: "Manual Checks", color: "#f2c94c", statusColor: "warn" },
   { id: "not_enough_info", label: "Not Enough Info", color: "#f2c94c", statusColor: "warn" },
   { id: "enriched", label: "Enriched", color: "#c44b32", statusColor: "accent" },
   { id: "contacted", label: "Contacted", color: "#4ea7fc", statusColor: "info" },

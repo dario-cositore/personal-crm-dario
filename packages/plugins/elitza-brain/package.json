@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@elitza/plugin": "workspace:*",
-    "@elitza/schema": "workspace:*"
+    "@elitza/schema": "workspace:*",
+    "undici": "8.13.1"
   },
   "devDependencies": {
     "@tsconfig/bun": "1.0.9",

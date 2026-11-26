@@ -379,6 +379,9 @@ export async function dispatchToTower(
   let finalEventPayload = eventPayload ? { ...eventPayload } : {}
   if (event === "outbound_prep") {
     const client = getClient(clientId)
+    if (client?.status === "manual_check") {
+      finalEventPayload.force = true
+    }
     if (client?.website) {
       const scraped = await scrapeSite(client.website)
       finalEventPayload.scraped_site_text = scraped.site_text

@@ -48,6 +48,12 @@ describe("tower callback actions", () => {
     expect(c?.risk_score).toBe(80)
     expect(getCustomFields(clientId).foo).toBe("bar")
   })
+  test("update_client accepts manual_check status", async () => {
+    const r = await tower.handleTowerCallback({ client_id: clientId, action: "update_client", patch: { status: "manual_check" } }, "Bearer shh")
+    expect(r.status).toBe(200)
+    const c = getClient(clientId)
+    expect(c?.status).toBe("manual_check")
+  })
   test("queue_email_draft creates draft email", async () => {
     const r = await tower.handleTowerCallback({ client_id: clientId, action: "queue_email_draft", subject: "Hi", body: "Body" }, "Bearer shh")
     expect(r.status).toBe(200)

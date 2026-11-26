@@ -1010,6 +1010,7 @@ setTimeout(updateNavToggleLabel, 150);
           <select id="peopleStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text)" onchange="loadPeople()">
             <option value="">All statuses</option>
             <option value="scouted">Scouted</option>
+            <option value="manual_check">Manual Checks</option>
             <option value="contacted">Contacted</option>
             <option value="followup_1">Follow-up 1</option>
             <option value="followup_2">Follow-up 2</option>
@@ -1892,10 +1893,10 @@ setTimeout(updateNavToggleLabel, 150);
 </div>
 
 <script>
-let STATUSES = ["scouted","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
-let STATUS_LABEL = {scouted:"Scouted",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
-let STATUS_COLOR = {scouted:"muted",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
-let COLUMN_COLOR = {scouted:"#62666d",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#c44b32",proposal:"#c44b32",workbook:"#c44b32",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
+let STATUSES = ["scouted","manual_check","contacted","followup_1","followup_2","followup_3","yes","no","stale","diagnose","proposal","workbook","scheduled","payment","done"];
+let STATUS_LABEL = {scouted:"Scouted",manual_check:"Manual Checks",contacted:"Contacted",followup_1:"Follow-up 1",followup_2:"Follow-up 2",followup_3:"Follow-up 3",yes:"Won",no:"Lost",stale:"Stale",diagnose:"Diagnose",proposal:"Proposal",workbook:"Workbook",scheduled:"Scheduled",payment:"Payment",done:"Done"};
+let STATUS_COLOR = {scouted:"muted",manual_check:"warn",contacted:"info",followup_1:"info",followup_2:"info",followup_3:"info",yes:"ok",no:"err",stale:"warn",diagnose:"accent",proposal:"accent",workbook:"accent",scheduled:"warn",payment:"ok",done:"ok"};
+let COLUMN_COLOR = {scouted:"#62666d",manual_check:"#f2c94c",contacted:"#4ea7fc",followup_1:"#4ea7fc",followup_2:"#4ea7fc",followup_3:"#4ea7fc",yes:"#27a644",no:"#eb5757",stale:"#f2c94c",diagnose:"#c44b32",proposal:"#c44b32",workbook:"#c44b32",scheduled:"#f2c94c",payment:"#27a644",done:"#27a644"};
 
 // Status pill rendered with the manually chosen color (COLUMN_COLOR hex), with
 // WCAG 2.2 AA contrast text (black or white, whichever passes 4.5:1).
@@ -5468,7 +5469,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <h3 id="segModalTitle">New segment</h3>
     <div class="field"><label>Name</label><input id="segName" type="text" placeholder="e.g. Paying customers"></div>
     <div class="field"><label>Description</label><input id="segDesc" type="text" placeholder="optional"></div>
-    <div class="field"><label>Status</label><select id="segStatus"><option value="">Any</option><option value="scouted">Scouted</option><option value="contacted">Contacted</option><option value="followup_1">Follow-up 1</option><option value="followup_2">Follow-up 2</option><option value="followup_3">Follow-up 3</option><option value="yes">Yes</option><option value="no">No</option><option value="stale">Stale</option><option value="done">Done</option></select></div>
+    <div class="field"><label>Status</label><select id="segStatus"><option value="">Any</option><option value="scouted">Scouted</option><option value="manual_check">Manual Checks</option><option value="contacted">Contacted</option><option value="followup_1">Follow-up 1</option><option value="followup_2">Follow-up 2</option><option value="followup_3">Follow-up 3</option><option value="yes">Yes</option><option value="no">No</option><option value="stale">Stale</option><option value="done">Done</option></select></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div class="field"><label>Min score</label><input id="segMinScore" type="number" placeholder="0"></div>
       <div class="field"><label>Max score</label><input id="segMaxScore" type="number" placeholder="100"></div>
