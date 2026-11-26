@@ -4716,8 +4716,11 @@ async function loadQueue() {
     body.appendChild(div);
   }
   const bar = document.createElement('div'); bar.style.marginTop='12px'; bar.style.display='flex'; bar.style.gap='8px';
-  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" onclick="sendAll()">Send all approved</button>';
+  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><!-- <button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button> --><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" id="sendAllBtn" disabled onclick="sendAll()">Send all approved</button>';
   body.appendChild(bar);
+  const hasApproved = (drafts.drafts || []).some(d => d.approved);
+  const sendBtn = document.getElementById('sendAllBtn');
+  if (sendBtn) { sendBtn.disabled = !hasApproved; sendBtn.style.opacity = hasApproved ? '1' : '0.4'; sendBtn.style.cursor = hasApproved ? 'pointer' : 'not-allowed'; }
 }
 async function approveOne(id){ try { await api('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Approved','ok'); } catch(e){ toast('Approve failed: '+e,'err'); } loadQueue(); }
 async function denyOne(id){ try { await api('/api/deny',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Denied','ok'); } catch(e){ toast('Deny failed: '+e,'err'); } loadQueue(); }
