@@ -4717,10 +4717,8 @@ async function loadQueue() {
   try { drafts = await api('/api/drafts'); }
   catch (e) { body.innerHTML = '<div class="empty-state"><h3>Failed to load</h3><p>'+esc(String(e))+'</p></div>'; return; }
   const all = drafts.drafts || [];
-  const drafted = all.filter(d => !d.sent && !d.approved);
-  const approved = all.filter(d => !d.sent && d.approved);
-  const sentAll = all.filter(d => d.sent);
-  const sent = sentAll.slice(-20); // cap to avoid clogging; "Clear sent" removes them
+  const drafted = all.filter(d => !d.approved);
+  const approved = all.filter(d => d.approved);
   if (!all.length) {
     const e = document.createElement('div'); e.className='empty-state';
     e.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><h3>Nothing to approve</h3><p>Drafts created via outreach will appear here. Run a scout, qualify a lead, and draft a first touch to get started.</p>';
@@ -4732,10 +4730,10 @@ async function loadQueue() {
   document.getElementById('queueBadge').textContent = drafted.length + approved.length;
   const cols = document.createElement('div');
   cols.style.display = 'grid';
-  cols.style.gridTemplateColumns = '1fr 1fr 1fr';
+  cols.style.gridTemplateColumns = '1fr 1fr';
   cols.style.gap = '12px';
   cols.style.alignItems = 'start';
-  const makeCol = (title, items, emptyText, color) => {
+  const makeCol = (title, items, emptyText) => {
     const col = document.createElement('div');
     col.className = 'section-card';
     col.style.padding = '10px';
@@ -4751,23 +4749,17 @@ async function loadQueue() {
     }
     return col;
   };
-  cols.appendChild(makeCol('Drafted', drafted, 'No drafted emails.', 'var(--text-muted)'));
-  cols.appendChild(makeCol('Approved', approved, 'No approved emails.', 'var(--ok)'));
-  cols.appendChild(makeCol('Sent', sent, 'No sent emails.', 'var(--info)'));
+  cols.appendChild(makeCol('Drafted', drafted, 'No drafted emails.'));
+  cols.appendChild(makeCol('Approved', approved, 'No approved emails.'));
   body.appendChild(cols);
   const bar = document.createElement('div'); bar.style.marginTop='12px'; bar.style.display='flex'; bar.style.gap='8px';
-  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><!-- <button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button> --><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" id="sendAllBtn" disabled onclick="sendAll()">Send all approved</button><button class="btn secondary" onclick="clearSentDrafts()" style="margin-left:auto">Clear sent</button>';
+  bar.innerHTML = '<button class="btn" onclick="approveAll()">Approve all</button><!-- <button class="btn secondary" onclick="batchDraft()">Batch Draft (50)</button><button class="btn secondary" onclick="runOutboundTick()">Run Outbound Tick</button> --><button class="btn secondary" style="color:var(--err)" onclick="denyAll()">Deny all</button><button class="btn secondary" id="sendAllBtn" disabled onclick="sendAll()">Send all approved</button>';
   body.appendChild(bar);
   const hasApproved = approved.length > 0;
   const sendBtn = document.getElementById('sendAllBtn');
   if (sendBtn) { sendBtn.disabled = !hasApproved; sendBtn.style.opacity = hasApproved ? '1' : '0.4'; sendBtn.style.cursor = hasApproved ? 'pointer' : 'not-allowed'; }
 }
 
-async function clearSentDrafts() {
-  try { const r = await api('/api/drafts/clear-sent', { method:'POST' }); toast('Cleared ' + (r.cleared||0) + ' sent draft(s)', 'ok'); }
-  catch (e) { toast('Clear failed: ' + e, 'err'); }
-  loadQueue();
-}
 async function approveOne(id){ try { await api('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Approved','ok'); } catch(e){ toast('Approve failed: '+e,'err'); } loadQueue(); }
 async function denyOne(id){ try { await api('/api/deny',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Denied','ok'); } catch(e){ toast('Deny failed: '+e,'err'); } loadQueue(); }
 async function sendOne(id){ try { const r = await api('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id]})}); toast('Sent '+ (Array.isArray(r.sent)?r.sent.length:r.sent) +' draft(s)','ok'); } catch(e){ toast('Send failed: '+e,'err'); } loadQueue(); loadBoard(); }
