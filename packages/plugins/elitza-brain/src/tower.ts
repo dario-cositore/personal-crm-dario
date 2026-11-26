@@ -56,86 +56,105 @@ const VALID_EVENTS: TowerEvent[] = [
 ]
 
 // ---- local website scraping (pre-scrape for Tower) ----
-const SCRAPE_SLUGS = ["contatti", "sede-e-contatti", "contact", "chi-siamo", "lo-studio", "team", "servizi", "prestazioni"]
+const SCRAPE_SLUGS = ["contatti", "sede-e-contatti", "contact", "chi-siamo", "lo-studio", "team", "servizi", "prestazioni", "ambulatori", "sedi"]
 const SCRAPE_ALLOWED_EMAIL_LOCALS = new Set(["info", "segreteria", "contatti", "studio", "amministrazione"])
-const SCRAPE_BLOCKED_PATHS = ["/alid/v1/widget.js", "/intake/", "/checkout", "/payment", "/pay", "waffo", "paypal"]
+const SCRAPE_BLOCKED_TOKENS = ["/alid/v1/widget.js", "/intake/", "/checkout", "/payment", "/pay", "waffo", "paypal", "pec@", "legalmail", "postacertificata", "certificata"]
 
 function scrapeBlockedUrl(url: string): boolean {
   const lower = url.toLowerCase()
-  return SCRAPE_BLOCKED_PATHS.some((p) => lower.includes(p))
+  return SCRAPE_BLOCKED_TOKENS.some((p) => lower.includes(p))
 }
 
 function stripHtmlToText(html: string): string {
   let t = html
-  // remove scripts and styles
   t = t.replace(/<script[\s\S]*?<\/script>/gi, " ")
   t = t.replace(/<style[\s\S]*?<\/style>/gi, " ")
   t = t.replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-  // remove tags
   t = t.replace(/<[^>]+>/g, " ")
-  // decode common entities
   t = t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-  // collapse whitespace
   t = t.replace(/\s+/g, " ").trim()
   return t
 }
 
-function extractAllowedEmails(text: string): string[] {
+function isBlockedEmail(email: string): boolean {
+  const lower = email.toLowerCase()
+  const local = lower.split("@")[0]
+  if (["pec", "postacertificata", "certificata", "privacy", "dpo", "legale", "fatturazione", "noreply", "no-reply", "no_reply"].includes(local)) return true
+  if (lower.includes("legalmail") || lower.includes("arubapec") || lower.includes("telecompost") || lower.includes(".pec.")) return true
+  return false
+}
+
+function extractAllowedEmails(text: string, html: string): string[] {
   const found = new Set<string>()
   const re = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const email = m[0].toLowerCase()
-    const local = email.split("@")[0]
-    if (SCRAPE_ALLOWED_EMAIL_LOCALS.has(local)) found.add(email)
+    if (!isBlockedEmail(email)) found.add(email)
   }
-  return [...found]
+  const mailtoRe = /mailto:([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
+  while ((m = mailtoRe.exec(html)) !== null) {
+    const email = m[1].toLowerCase()
+    if (!isBlockedEmail(email)) found.add(email)
+  }
+  // prioritize: listed locals first, then others
+  const prioritized = [...found].sort((a, b) => {
+    const la = a.split("@")[0]
+    const lb = b.split("@")[0]
+    const pa = SCRAPE_ALLOWED_EMAIL_LOCALS.has(la) ? 0 : 1
+    const pb = SCRAPE_ALLOWED_EMAIL_LOCALS.has(lb) ? 0 : 1
+    return pa - pb
+  })
+  return prioritized
 }
 
 export interface ScrapeResult {
   fetch_ok: boolean
   site_text: string
-  pages_fetched: number
+  pages_fetched: string[]
   extracted_emails: string[]
 }
 
-export async function scrapeSite(website: string | null | undefined): Promise<ScrapeResult> {
-  const result: ScrapeResult = { fetch_ok: false, site_text: "", pages_fetched: 0, extracted_emails: [] }
-  if (!website) return result
-  let host = String(website).trim()
+export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Promise<ScrapeResult> {
+  const result: ScrapeResult = { fetch_ok: false, site_text: "", pages_fetched: [], extracted_emails: [] }
+  if (!rawUrl) return result
+  let host = String(rawUrl).trim()
   host = host.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].toLowerCase()
   if (!host || host.includes(" ")) return result
 
-  const urlsToTry: string[] = []
-  // homepage variants
-  urlsToTry.push(`https://www.${host}`)
-  urlsToTry.push(`https://${host}`)
-  // internal pages
-  for (const slug of SCRAPE_SLUGS) {
-    urlsToTry.push(`https://www.${host}/${slug}`)
-    urlsToTry.push(`https://${host}/${slug}`)
+  const browserHeaders = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
   }
 
-  const fetchedTexts: string[] = []
-  const allEmails = new Set<string>()
-  let pagesFetched = 0
-  const seenHosts = new Set<string>()
+  // candidate urls: homepage variants first, then internal slugs
+  const candidateUrls: string[] = []
+  candidateUrls.push(`https://www.${host}/`)
+  candidateUrls.push(`https://${host}/`)
+  for (const slug of SCRAPE_SLUGS) {
+    candidateUrls.push(`https://www.${host}/${slug}`)
+    candidateUrls.push(`https://${host}/${slug}`)
+  }
 
-  for (const url of urlsToTry) {
-    if (result.site_text.length >= 20000) break
+  const fetched: { url: string; text: string; html: string }[] = []
+  const seen = new Set<string>()
+
+  for (const url of candidateUrls) {
+    if (result.site_text && fetched.reduce((a, b) => a + b.text.length, 0) >= 20000) break
     if (scrapeBlockedUrl(url)) continue
-    // dedupe by normalized url
+    let key: string
     try {
       const u = new URL(url)
-      const key = u.hostname + u.pathname
-      if (seenHosts.has(key)) continue
-      seenHosts.add(key)
+      key = u.hostname + u.pathname.replace(/\/$/, "")
     } catch { continue }
+    if (seen.has(key)) continue
+    seen.add(key)
     try {
       const res = await fetch(url, {
         method: "GET",
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; ElitzaCRM/1.0)" },
-        signal: AbortSignal.timeout(8000),
+        headers: browserHeaders,
+        signal: AbortSignal.timeout(12000),
         redirect: "follow",
       })
       if (!res.ok) continue
@@ -144,35 +163,53 @@ export async function scrapeSite(website: string | null | undefined): Promise<Sc
       const html = await res.text()
       const text = stripHtmlToText(html)
       if (text.length < 50) continue
-      pagesFetched++
-      fetchedTexts.push(text)
-      for (const e of extractAllowedEmails(text)) allEmails.add(e)
-      // extract emails from mailto: links in raw html
-      const mailtoRe = /mailto:([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi
-      let mm: RegExpExecArray | null
-      while ((mm = mailtoRe.exec(html)) !== null) {
-        const em = mm[1].toLowerCase()
-        const local = em.split("@")[0]
-        if (SCRAPE_ALLOWED_EMAIL_LOCALS.has(local)) allEmails.add(em)
-      }
+      fetched.push({ url, text, html })
     } catch {
-      // ignore fetch errors, try next
+      // ignore, try next
     }
   }
 
-  // Build combined text up to 20000 chars, homepage first
+  // homepage = first successful fetch; subpages = next successful non-homepage fetches (up to 2)
+  const homeEntry = fetched.length > 0 ? fetched[0] : null
+  const subEntries: typeof fetched = []
+  for (let i = 1; i < fetched.length && subEntries.length < 2; i++) {
+    try {
+      const u = new URL(fetched[i].url)
+      if (u.pathname === "/" || u.pathname === "") continue
+      subEntries.push(fetched[i])
+    } catch { /* skip */ }
+  }
+
+  // Build text with caps
   let combined = ""
-  for (const t of fetchedTexts) {
+  const pagesFetched: string[] = []
+  if (homeEntry) {
+    const cap = Math.min(homeEntry.text.length, 12000)
+    combined += homeEntry.text.slice(0, cap)
+    pagesFetched.push(homeEntry.url)
+  }
+  const allEmails = new Set<string>()
+  if (homeEntry) for (const e of extractAllowedEmails(homeEntry.text, homeEntry.html)) allEmails.add(e)
+
+  for (const sub of subEntries) {
     if (combined.length >= 20000) break
     const remaining = 20000 - combined.length
-    combined += (combined ? "\n\n" : "") + t.slice(0, remaining)
+    const cap = Math.min(sub.text.length, 5000, remaining)
+    if (cap <= 0) break
+    combined += "\n\n" + sub.text.slice(0, cap)
+    pagesFetched.push(sub.url)
+    for (const e of extractAllowedEmails(sub.text, sub.html)) allEmails.add(e)
   }
-  result.site_text = combined
+
+  result.site_text = combined.slice(0, 20000)
   result.pages_fetched = pagesFetched
   result.extracted_emails = [...allEmails]
-  result.fetch_ok = pagesFetched > 0
+  result.fetch_ok = fetched.length > 0
   return result
 }
+
+// backward-compat alias
+export const scrapeSite = scrapeWebsiteLocal
 
 export interface TowerConfig {
   webhookUrl: string | null
