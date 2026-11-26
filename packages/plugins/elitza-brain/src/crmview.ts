@@ -1097,6 +1097,13 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             maton: matonSet,
           })
         }
+        const towerConsoleMatch = path.match(/^\/api\/clients\/(\d+)\/tower-console$/)
+        if (towerConsoleMatch && req.method === "GET") {
+          const id = Number(towerConsoleMatch[1])
+          const { getTowerConsole } = await import("./tower.js")
+          const st = getTowerConsole(id)
+          return json({ active: st.active, status: st.status, execution_id: st.execution_id, lines: st.lines })
+        }
         if (path === "/api/tower/dispatch" && req.method === "POST") {
           const body = await readBody(req)
           const clientId = Number(body.client_id ?? body.clientId)
@@ -1120,8 +1127,16 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405)
           const body = await readBody(req)
           const auth = req.headers.get("authorization")
-          const { handleTowerCallback } = await import("./tower.js")
+          const { handleTowerCallback, appendTowerConsole } = await import("./tower.js")
+          const clientId = Number(body?.client_id)
+          const action = String(body?.action ?? "").trim()
           const r = await handleTowerCallback(body, auth)
+          if (Number.isFinite(clientId) && clientId > 0) {
+            try {
+              if (r.ok) appendTowerConsole(clientId, "ok", `CRM Callback: ${action} -> HTTP 200`)
+              else appendTowerConsole(clientId, "error", `CRM Callback: ${action} -> HTTP ${r.status}: ${r.error || ""}`)
+            } catch {}
+          }
           return json(r.ok ? { ok: true, result: r.result } : { error: r.error }, r.status)
         }
         const callKitMatch = path.match(/^\/api\/tower\/call-kit\/(\d+)$/)

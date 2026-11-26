@@ -267,6 +267,45 @@ export async function scrapeWebsiteLocal(rawUrl: string | null | undefined): Pro
 // backward-compat alias
 export const scrapeSite = scrapeWebsiteLocal
 
+// ---- Mach 1 Live Console (per-client execution log) ----
+export interface ConsoleLine { ts: string; level: "info" | "ok" | "warn" | "error"; text: string }
+export interface ConsoleState {
+  active: boolean
+  status: string
+  execution_id: string | null
+  lines: ConsoleLine[]
+  startedAt: number
+}
+
+const consoleStore = new Map<number, ConsoleState>()
+
+function nowTs(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function getConsole(clientId: number): ConsoleState {
+  if (!consoleStore.has(clientId)) {
+    consoleStore.set(clientId, { active: false, status: "idle", execution_id: null, lines: [], startedAt: 0 })
+  }
+  return consoleStore.get(clientId)!
+}
+
+function pushConsole(clientId: number, level: ConsoleLine["level"], text: string): void {
+  const st = getConsole(clientId)
+  st.lines.push({ ts: nowTs(), level, text })
+  if (st.lines.length > 500) st.lines.splice(0, st.lines.length - 500)
+}
+
+export function getTowerConsole(clientId: number): ConsoleState {
+  return getConsole(clientId)
+}
+
+export function appendTowerConsole(clientId: number, level: ConsoleLine["level"], text: string): void {
+  pushConsole(clientId, level, text)
+}
+
 export interface TowerConfig {
   webhookUrl: string | null
   webhookToken: string | null
@@ -368,6 +407,77 @@ export interface DispatchResult {
   error?: string
 }
 
+function parseBotIdentifier(): string {
+  try {
+    const u = new URL(towerConfig().webhookUrl || "")
+    return u.searchParams.get("bot_identifier") || ""
+  } catch { return "" }
+}
+
+function startTowerPoller(clientId: number, executionId: string): void {
+  const st = getConsole(clientId)
+  const bot = parseBotIdentifier()
+  const token = towerConfig().webhookToken
+  const pollUrl = `https://api.mach1ai.com/v3/workflows/${bot}/executions/${executionId}`
+  const seenSteps = new Set<string>()
+  const startedAt = Date.now()
+  const maxMs = 3 * 60 * 1000
+  const interval = setInterval(async () => {
+    if (Date.now() - startedAt > maxMs) {
+      pushConsole(clientId, "warn", "Polling timed out (3 min).")
+      st.active = false; st.status = "timeout"
+      clearInterval(interval)
+      return
+    }
+    try {
+      const res = await fetch(pollUrl, {
+        method: "GET",
+        headers: { "api-key": token || "", "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) {
+        pushConsole(clientId, "warn", `Poll HTTP ${res.status}`)
+        return
+      }
+      const data: any = await res.json()
+      const status = String(data?.status || data?.state || "")
+      if (status) st.status = status
+      // steps
+      const steps = data?.steps || data?.trace || data?.step_list || []
+      if (Array.isArray(steps)) {
+        for (const step of steps) {
+          const name = String(step?.name || step?.step || step?.id || "")
+          const stStatus = String(step?.status || step?.state || "")
+          const dur = step?.duration ?? step?.duration_ms ?? step?.elapsed
+          const err = step?.error || step?.error_message || step?.reason
+          const key = `${name}::${stStatus}`
+          if (!name) continue
+          if (seenSteps.has(key)) continue
+          // only log on status transitions
+          if (stStatus === "running" || stStatus === "started" || stStatus === "in_progress") {
+            seenSteps.add(key)
+            pushConsole(clientId, "info", `Step started: ${name}`)
+          } else if (stStatus === "completed" || stStatus === "success" || stStatus === "done") {
+            seenSteps.add(key)
+            pushConsole(clientId, "ok", `Step completed: ${name}${dur != null ? ` (${dur}ms)` : ""}`)
+          } else if (stStatus === "failed" || stStatus === "error") {
+            seenSteps.add(key)
+            pushConsole(clientId, "error", `Step failed: ${name}${err ? ` — ${err}` : ""}`)
+          }
+        }
+      }
+      if (status === "completed" || status === "failed" || status === "error") {
+        pushConsole(clientId, status === "completed" ? "ok" : "error", `Execution ${status}`)
+        st.active = false
+        st.status = status
+        clearInterval(interval)
+      }
+    } catch (e) {
+      pushConsole(clientId, "warn", `Poll error: ${String(e)}`)
+    }
+  }, 1500)
+}
+
 export async function dispatchToTower(
   clientId: number,
   event: TowerEvent,
@@ -377,6 +487,14 @@ export async function dispatchToTower(
   if (!cfg.webhookUrl) {
     return { ok: false, skipped: true, reason: "TOWER_WEBHOOK_URL not configured" }
   }
+  // Reset console for this run
+  const consoleState = getConsole(clientId)
+  consoleState.active = true
+  consoleState.status = "running"
+  consoleState.execution_id = null
+  consoleState.lines = []
+  consoleState.startedAt = Date.now()
+
   // Pre-scrape the client's website locally (for outbound_prep) so Tower gets
   // clean text even when Italian hosting firewalls block cloud IPs.
   let finalEventPayload = eventPayload ? { ...eventPayload } : {}
@@ -386,15 +504,22 @@ export async function dispatchToTower(
       finalEventPayload.force = true
     }
     if (client?.website) {
+      pushConsole(clientId, "info", `Local scrape: fetching ${client.website}...`)
       const scraped = await scrapeSite(client.website)
       finalEventPayload.scraped_site_text = scraped.site_text
       finalEventPayload.scraped_pages_fetched = scraped.pages_fetched
       finalEventPayload.scraped_emails = scraped.extracted_emails
-      if (!scraped.fetch_ok) finalEventPayload.scraped_site_text = ""
+      if (!scraped.fetch_ok) {
+        finalEventPayload.scraped_site_text = ""
+        pushConsole(clientId, "warn", "Local scrape: no usable text - delegating to Tower")
+      } else {
+        pushConsole(clientId, "ok", `Local scrape complete: ${scraped.pages_fetched.length} pages (${scraped.site_text.length} chars), emails: ${scraped.extracted_emails.join(", ") || "none"}`)
+      }
     } else {
       finalEventPayload.scraped_site_text = ""
       finalEventPayload.scraped_pages_fetched = 0
       finalEventPayload.scraped_emails = []
+      pushConsole(clientId, "info", "Local scrape: no website - skipping")
     }
   }
   const payload = buildTowerPayload(clientId, event, finalEventPayload)
@@ -436,11 +561,26 @@ export async function dispatchToTower(
     if (!res.ok) {
       let detail = ""
       try { detail = (await res.text()).slice(0, 400) } catch {}
+      pushConsole(clientId, "error", `Dispatch failed: HTTP ${res.status}: ${detail}`.trim())
+      const st = getConsole(clientId); st.active = false; st.status = "failed"
       return { ok: false, status: res.status, error: `HTTP ${res.status}: ${detail}`.trim() }
     }
+    // capture execution_id from 202 response
+    let executionId: string | null = null
+    try {
+      const data: any = await res.json()
+      executionId = data?.execution_id || data?.executionId || data?.id || data?.run_id || null
+    } catch { /* no json */ }
+    pushConsole(clientId, "ok", `Dispatched ${event} to Mach 1 Tower -> execution_id: ${executionId || "(none)"}`)
+    const st = getConsole(clientId)
+    st.execution_id = executionId
+    if (executionId) startTowerPoller(clientId, executionId)
+    else { st.active = false; st.status = "completed" }
     return { ok: true, status: res.status }
   } catch (error) {
     try { logAudit("tower", clientId, "dispatch_failed", String(error)) } catch {}
+    pushConsole(clientId, "error", `Dispatch error: ${String(error)}`)
+    const st = getConsole(clientId); st.active = false; st.status = "failed"
     return { ok: false, error: String(error) }
   }
 }

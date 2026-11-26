@@ -4261,6 +4261,9 @@ async function openDetail(id) {
     + '<button class="btn xs secondary" onclick="addTaskForClient('+c.id+')">+ Task</button>'
     + '<button class="btn xs danger" onclick="removeLead('+c.id+')">Remove Lead</button>'
     + '</div></div>'
+    + '<div class="section-card" id="towerConsoleCard" style="margin-top:10px;border-color:var(--border)"><h4 style="display:flex;align-items:center;gap:8px">Mach 1 Live Console <span id="towerConsoleStatus" style="font-size:10px;color:var(--text-muted);font-weight:400">idle</span></h4>'
+    + '<div id="towerConsoleBody" style="background:#0b0d10;color:#9aa0a6;font-family:var(--mono,monospace);font-size:11px;line-height:1.5;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);max-height:260px;overflow:auto;display:none"></div>'
+    + '</div>'
     + '<div class="section-card" style="margin-top:10px"><h4>Autopilot log</h4><pre id="autopilotLog" style="white-space:pre-wrap;font-size:11px;max-height:220px;overflow:auto;background:var(--bg-elevated);padding:8px;border-radius:var(--radius-sm);border:1px solid var(--border);display:none"></pre></div>'
     + '<div class="section-card" style="margin-top:10px"><h4>Communication</h4>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
@@ -4296,9 +4299,11 @@ async function openDetail(id) {
     + (data.assets.length ? data.assets.map(a=>'<div class="asset-row" style="cursor:pointer" onclick="viewAsset(\''+esc(a.path||'')+'\',\''+esc(a.name)+'\',\''+esc(a.kind)+'\')"><span class="kind">'+esc(a.kind)+'</span><span>'+esc(a.name)+'</span>'+(a.path?'<span class="path">'+esc(a.path)+'</span>':'')+'</div>').join('') : '<div class="empty-state" style="padding:20px"><p>No assets yet.</p></div>')
     + '</div>'
   showView('detail');
+  if (_towerConsoleTimer) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; }
   loadCallKit(id);
   restoreEnrichPanel(id);
   restoreAutopilotPanel(id);
+  loadTowerConsole(id);
 }
 
 
@@ -4306,7 +4311,50 @@ async function towerDispatch(id, event) {
   try {
     const r = await api('/api/tower/dispatch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_id: id, event }) });
     toast('Tower: ' + event + ' → ' + (r.ok ? 'ok' : (r.error || 'failed')), r.ok ? 'ok' : 'err');
+    // kick console polling
+    loadTowerConsole(id);
+    startTowerConsolePolling(id);
   } catch (e) { toast('Tower dispatch failed: ' + e, 'err'); }
+}
+
+let _towerConsoleTimer = null;
+async function loadTowerConsole(id) {
+  const body = document.getElementById('towerConsoleBody');
+  const statusEl = document.getElementById('towerConsoleStatus');
+  const card = document.getElementById('towerConsoleCard');
+  if (!body) return;
+  try {
+    const r = await api('/api/clients/' + id + '/tower-console');
+    const lines = r.lines || [];
+    const active = !!r.active;
+    if (statusEl) statusEl.textContent = r.status || 'idle';
+    if (lines.length === 0 && !active) {
+      body.style.display = 'none';
+      if (card) card.style.borderColor = 'var(--border)';
+      return;
+    }
+    body.style.display = 'block';
+    if (card) card.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    body.innerHTML = lines.map(l => {
+      const color = l.level === 'ok' ? 'var(--ok)' : l.level === 'error' ? 'var(--err)' : l.level === 'warn' ? 'var(--warn)' : 'var(--text-secondary)';
+      return '<div style="color:' + color + '"><span style="color:var(--text-muted)">' + esc(l.ts) + '</span> ' + esc(l.text) + '</div>';
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+    if (active && !_towerConsoleTimer) startTowerConsolePolling(id);
+    if (!active && _towerConsoleTimer) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; }
+    // refresh client detail when completed
+    if (!active && r.status === 'completed' && currentDetail && currentDetail.client && currentDetail.client.id === id) {
+      // soft refresh of drafts/status handled by user; no auto-reload to avoid wipe
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function startTowerConsolePolling(id) {
+  if (_towerConsoleTimer) clearInterval(_towerConsoleTimer);
+  _towerConsoleTimer = setInterval(() => {
+    if (!document.getElementById('towerConsoleBody')) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; return; }
+    loadTowerConsole(id);
+  }, 1500);
 }
 async function loadCallKit(id) {
   const el = document.getElementById('callKitBody');
@@ -4369,7 +4417,7 @@ async function saveTowerSecret(name, value) {
   } catch (e) { toast('Failed: ' + e, 'err'); }
 }
 
-function closeDetail() { showView('board'); }
+function closeDetail() { if (_towerConsoleTimer) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; } showView('board'); }
 
 async function rebootServer() {
   if (!confirm('Reboot the CRM server now? It will auto-recover via systemd.')) return;
