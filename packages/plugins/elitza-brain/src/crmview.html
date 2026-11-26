@@ -1644,7 +1644,6 @@ setTimeout(updateNavToggleLabel, 150);
           <h1>Approval queue</h1>
           <p>Drafts waiting for your batch approval. Nothing sends without a click.</p>
         </div>
-        <div style="margin-bottom:8px"><label><input type="checkbox" id="queueSelectAll" onchange="toggleQueueSelectAll(this.checked)"> Select all</label></div>
         <div class="queue-list" id="queueBody"></div>
       </div>
       <div id="scout" class="view">
@@ -4697,7 +4696,7 @@ async function logNote(id) {
   await loadBoard(); openDetail(id);
 }
 
-async function renderQueueItem(d) {
+function renderQueueItem(d) {
   const div = document.createElement('div'); div.className='queue-item';
   div.innerHTML = '<div class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg></div>'
     + '<div class="info"><div class="title"><a href="#" class="link">'+esc(d.client_name||'client '+d.client_id)+'</a></div><div class="meta">'+(d.path?'<a href="#" class="link" title="Open draft">'+esc(d.path)+'</a>':'')+'</div></div>'
