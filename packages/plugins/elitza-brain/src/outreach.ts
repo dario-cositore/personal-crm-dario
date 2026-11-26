@@ -510,8 +510,13 @@ export async function sendApproved(ids?: number[]): Promise<SendResult> {
       result.failed.push({ id: pipelineRow.id, reason: "draft file missing or unreadable" })
       continue
     }
-    // Cadence guard: never send a follow-up before its scheduled due date.
+    // Cadence guard: never send a follow-up before its scheduled due date,
+    // and never send beyond the 4-touch cadence.
     const nextTouch = pipelineRow.touch + 1
+    if (nextTouch > 4) {
+      result.failed.push({ id: pipelineRow.id, reason: "cadence complete (4/4 touches already sent)" })
+      continue
+    }
     if (nextTouch > 1 && pipelineRow.next_touch_at) {
       const due = Date.parse(pipelineRow.next_touch_at)
       if (Number.isFinite(due) && Date.now() < due) {
