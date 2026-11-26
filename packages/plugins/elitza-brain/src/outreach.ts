@@ -128,7 +128,7 @@ export const LOCKED_IT_SIGNATURE = [
   "",
   "Dario Cositore",
   "Sistemi IA & Operatività",
-  "Castelleone (CR) / Milano | [dariocositore.com/it](https://dariocositore.com/it)",
+  "Castelleone (CR) / Milano | dariocositore.com/it",
   "",
   "P.S. Lavoriamo direttamente sopra gli strumenti che usate già, senza dover cambiare gestionale o abitudini in segreteria.",
 ].join("\n")
@@ -982,14 +982,7 @@ export function validateAndSanitizeDraft(input: any, client?: any, touch = 1): a
       issues.push("client name not referenced")
     }
   }
-  // local hook check for Italian Touch 1
-  if (lang === "it") {
-    const hasHook = /Castelleone|Milano/i.test(body)
-    if (!hasHook) {
-      body = (client?.address?.toLowerCase().includes("castelleone") ? "Ti scrivo qui da Castelleone. " : "Ti scrivo da Milano. ") + body
-      issues.push("local hook prepended")
-    }
-  }
+  // local hook is no longer auto-prepended; the model is responsible for it.
 
   const ok = issues.length === 0
   if (isStr) return body

@@ -43,22 +43,14 @@ describe("outreach drafting guardrails", () => {
     expect(text).toContain("IA")
   })
 
-  test("Castelleone lead includes local hook", () => {
+  test("Draft body is stored verbatim (no auto prefix)", () => {
     const { client } = addClient({ name: "CastBizDraft", email: "castdraft@studiorossi.it", language: "it", address: "Castelleone, CR" })
     outreach.addToPipeline(client.id)
     outreach.writeDraft(client.id, { subject: "hi3", body: "Ciao, testo breve." })
     const row = outreach.listPipeline().find((r: any) => r.client_id === client.id)!
     const text = fs.readFileSync(row.draft_path as string, "utf8")
-    expect(text.toLowerCase()).toContain("ti scrivo qui da castelleone")
-  })
-
-  test("Milan lead includes local hook", () => {
-    const { client } = addClient({ name: "MilanBizDraft", email: "milandraft@studiorossi.it", language: "it", address: "Milano, MI" })
-    outreach.addToPipeline(client.id)
-    outreach.writeDraft(client.id, { subject: "hi4", body: "Ciao, testo breve." })
-    const row = outreach.listPipeline().find((r: any) => r.client_id === client.id)!
-    const text = fs.readFileSync(row.draft_path as string, "utf8")
-    expect(text.toLowerCase()).toContain("ti scrivo da milano")
+    expect(text.toLowerCase()).toContain("ciao, testo breve.")
+    expect(row.approved).toBe(0)
   })
 })
 
