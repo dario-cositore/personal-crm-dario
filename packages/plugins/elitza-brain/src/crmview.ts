@@ -10,7 +10,7 @@
  * the engine (elitza serve) starts and goes down when it stops.
  */
 
-import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail, logInteraction } from "./crm.js"
+import { addClient, findClients, countClients, getClient, updateClient, listInteractions, listAssets, listCompanies, crmDb, saveScoutRun, listScoutRuns, getScoutRun, deleteScoutRun, listSegments, getSegment, saveSegment, updateSegment, deleteSegment, countSegmentMembers, listSegmentMembers, listEmails, getEmail, createEmail, updateEmail, deleteEmail, moveEmail, emailCounts, findClientByEmail, logInteraction, logAudit } from "./crm.js"
 import { scoutBusinesses } from "./scouting.js"
 import { enrichClient } from "./enrichment.js"
 import { classifyEmailCandidate, isSendableOutreachEmail } from "./email_gate.js"
@@ -2620,6 +2620,16 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           }
           return json({ reply: reply || "(no response)", thinking })
         }
+        if (path === "/api/server/reboot" && req.method === "POST") {
+          try { logAudit("server", 0, "reboot_requested", "user-initiated") } catch {}
+          // Respond first, then exit so systemd (Restart=always) brings it back.
+          setTimeout(() => { try { process.exit(0) } catch {} }, 700)
+          return json({ ok: true, message: "rebooting" })
+        }
+        if (path === "/api/server/status" && req.method === "GET") {
+          return json({ ok: true, uptime: process.uptime(), pid: process.pid })
+        }
+
         // ---- Mail ----
         if (path === "/api/emails" && req.method === "GET") {
           const folder = url.searchParams.get("folder") || undefined
