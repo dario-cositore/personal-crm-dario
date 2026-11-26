@@ -4087,6 +4087,13 @@ async function saveStatus(id, status) {
   try { await api('/api/clients/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, status }) }); toast('Status set to ' + status, 'ok'); await loadBoard(); openDetail(id); }
   catch (e) { toast('Save failed: ' + e.message, 'err'); }
 }
+async function saveField(id, field, value) {
+  const payload = { id };
+  if (field === 'score') payload[field] = value === '' ? null : Number(value);
+  else payload[field] = value === '' ? null : value;
+  try { await api('/api/clients/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }); toast(field + ' saved', 'ok'); }
+  catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
 
 function debounceBoardSearch() {
   clearTimeout(window._boardSearchTimer);
@@ -4210,12 +4217,14 @@ async function openDetail(id) {
     + '<div class="detail-grid">'
     + '<div class="section-card"><h4>Contact</h4>'
     + '<div class="field"><span class="label">Status</span><span class="value">'+statusPill(c.status)+'</span></div>'
-    + '<div class="field"><span class="label">Vertical</span><span class="value">'+esc(c.vertical||'—')+'</span></div>'
-    + '<div class="field"><span class="label">Score</span><span class="value">'+(c.score??'—')+'</span></div>'
-    + '<div class="field"><span class="label">Address</span><span class="value">'+mapsLink(c.address)+'</span></div>'
-    + '<div class="field"><span class="label">Website</span><span class="value">'+webLink(c.website)+'</span></div>'
-    + '<div class="field"><span class="label">Email</span><span class="value">'+mailLink(c.email)+'</span></div>'
-    + '<div class="field"><span class="label">Phone</span><span class="value mono">'+telLink(c.phone)+'</span></div>'
+    + '<div class="field"><span class="label">Name</span><span class="value"><input id="editName" value="'+esc(c.name||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'name\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Vertical</span><span class="value"><input id="editVertical" value="'+esc(c.vertical||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'vertical\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Score</span><span class="value"><input id="editScore" type="number" value="'+(c.score!=null?c.score:'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'score\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Company</span><span class="value"><input id="editCompany" value="'+esc(c.company||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'company\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Address</span><span class="value"><input id="editAddress" value="'+esc(c.address||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'address\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Website</span><span class="value"><input id="editWebsite" value="'+esc(c.website||'')+'" placeholder="https://..." style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'website\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Email</span><span class="value"><input id="editEmail" value="'+esc(c.email||'')+'" placeholder="name@domain.com" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'email\',this.value)"></span></div>'
+    + '<div class="field"><span class="label">Phone</span><span class="value"><input id="editPhone" value="'+esc(c.phone||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text);font-size:12px" onchange="saveField('+c.id+',\'phone\',this.value)"></span></div>'
     + '<div class="field"><span class="label">Language</span><span class="value"><select id="langSelect" onchange="saveLanguage('+c.id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:12px"><option value="en"'+(c.language==='en'?' selected':'')+'>EN</option><option value="it"'+(c.language==='it'?' selected':'')+'>IT</option></select></span></div>'
     + '<div class="field"><span class="label">Status</span><span class="value"><select id="statusSelect" onchange="saveStatus('+c.id+', this.value)" style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 6px;color:var(--text);font-size:12px">'
     + STATUSES.map(s => '<option value="'+s+'"'+(c.status===s?' selected':'')+'>'+(STATUS_LABEL[s]||s)+'</option>').join('')
