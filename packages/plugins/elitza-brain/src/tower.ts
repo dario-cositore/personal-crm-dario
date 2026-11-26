@@ -35,6 +35,7 @@ import {
   listEmails,
 } from "./crm.js"
 import { writeDraft } from "./outreach.js"
+import { isSendableOutreachEmail } from "./email_gate.js"
 import { advance } from "./production.js"
 import { dispose } from "./outreach.js"
 import { promoteClientToReferrer, addThankYou } from "./crm.js"
@@ -596,6 +597,7 @@ export interface CallbackResult {
 
 const ALLOWED_CLIENT_PATCH = new Set([
   "status",
+  "email",
   "deal_value",
   "notes",
   "next_action",
@@ -642,7 +644,13 @@ export async function handleTowerCallback(
         const patch: Record<string, unknown> = {}
         const src = body.patch && typeof body.patch === "object" ? body.patch : body
         for (const key of ALLOWED_CLIENT_PATCH) {
-          if (src && src[key] !== undefined) patch[key] = src[key]
+          if (src && src[key] !== undefined) {
+            if (key === "email") {
+              const em = String(src[key] ?? "").trim()
+              if (!em || !isSendableOutreachEmail(em)) continue
+            }
+            patch[key] = src[key]
+          }
         }
         if (Object.keys(patch).length) updateClient(clientId, patch as any)
         if (body.custom_fields && typeof body.custom_fields === "object") {
@@ -702,6 +710,12 @@ export async function handleTowerCallback(
         const subject = String(body.subject ?? "").trim()
         const bodyText = String(body.body ?? "").trim()
         if (!subject || !bodyText) return { ok: false, status: 400, error: "subject and body required" }
+        // If the client has no email yet, accept a scraped non-blocked email from Tower.
+        const incomingEmail = String(body.to ?? body.email ?? "").trim()
+        const client = getClient(clientId)
+        if (client && !client.email && incomingEmail && isSendableOutreachEmail(incomingEmail)) {
+          try { updateClient(clientId, { email: incomingEmail }) } catch {}
+        }
         const { row } = writeDraft(clientId, {
           subject,
           body: bodyText,

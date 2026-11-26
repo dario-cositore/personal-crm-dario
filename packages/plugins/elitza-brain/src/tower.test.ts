@@ -54,6 +54,16 @@ describe("tower callback actions", () => {
     const c = getClient(clientId)
     expect(c?.status).toBe("manual_check")
   })
+  test("queue_outreach_draft accepts body.to for email-less client and keeps approved=0", async () => {
+    const { client } = addClient({ name: "Emailless Biz", email: null as any })
+    addToPipeline(client.id)
+    const r = await tower.handleTowerCallback({ client_id: client.id, action: "queue_outreach_draft", subject: "Hi", body: "Body text", to: "info@emaillessbiz.it" }, "Bearer shh")
+    expect(r.status).toBe(200)
+    const c = getClient(client.id)
+    expect(c?.email).toBe("info@emaillessbiz.it")
+    const row = crmDb().query("SELECT approved FROM pipeline WHERE client_id = ?").get(client.id) as any
+    expect(row.approved).toBe(0)
+  })
   test("queue_email_draft creates draft email", async () => {
     const r = await tower.handleTowerCallback({ client_id: clientId, action: "queue_email_draft", subject: "Hi", body: "Body" }, "Bearer shh")
     expect(r.status).toBe(200)
