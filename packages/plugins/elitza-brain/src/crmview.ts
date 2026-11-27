@@ -2152,7 +2152,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
               const cm = txt.match(/^created:\s*(.+)$/m)
               if (cm) createdAt = cm[1].trim()
             } catch {}
-            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, sent, stage: r.stage, touch: r.touch, created_at: createdAt }
+            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, client_email: c?.email ?? null, client_website: c?.website ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, sent, stage: r.stage, touch: r.touch, created_at: createdAt }
           })
           // chronological: newest first
           drafts.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
