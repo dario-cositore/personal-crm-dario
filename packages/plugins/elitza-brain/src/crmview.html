@@ -4547,17 +4547,19 @@ async function toggleAutofarm() {
   if (btn) btn.disabled = true;
   try {
     const r = await api('/api/autofarm/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    if (r && r.enabled) toast('Autofarm started - dispatching in background...', 'ok');
-    else toast('Autofarm paused', 'info');
+    if (r && r.enabled) { toast('Autofarm ON - dispatching now...', 'ok'); }
+    else { toast('Autofarm OFF - Mach 1 paused', 'info'); }
   } catch (e) { toast('Toggle failed: ' + e, 'err'); }
   await loadAutofarmStatus();
-  // Poll status a few times so the user sees drafts arriving.
-  let polls = 0;
-  const iv = setInterval(async () => {
-    polls++;
-    await loadAutofarmStatus();
-    if (polls >= 6) clearInterval(iv);
-  }, 3000);
+  // Poll status so the user sees drafts arriving.
+  if (btn && btn.textContent.indexOf('ON') !== -1) {
+    let polls = 0;
+    const iv = setInterval(async () => {
+      polls++;
+      await loadAutofarmStatus();
+      if (polls >= 10) clearInterval(iv);
+    }, 2000);
+  }
 }
 function closeDetail() { if (_towerConsoleTimer) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; } showView('board'); }
 

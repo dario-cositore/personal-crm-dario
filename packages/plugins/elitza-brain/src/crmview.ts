@@ -2720,9 +2720,11 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           if (enabled) {
             try {
               const { spawn } = await import("node:child_process")
+              const fs = await import("node:fs")
+              const logFd = fs.openSync("/tmp/opencode/autofarm.log", "a")
               const child = spawn("python3", ["/home/dario/workspace-v2/products/personal-crm-dario/scripts/autofarm_local.py"], {
                 detached: true,
-                stdio: "ignore",
+                stdio: ["ignore", logFd, logFd],
                 env: { ...process.env },
               })
               child.unref()
