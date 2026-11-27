@@ -4152,8 +4152,46 @@ async function loadBoard() {
     const col = document.createElement('div'); col.className='column';
     col.dataset.status = st;
     col.innerHTML = '<div class="column-header"><div class="column-title"><span style="width:6px;height:6px;border-radius:50%;background:'+ (COLUMN_COLOR[st]||'#62666d') +'"></span>'+(STATUS_LABEL[st]||st)+'</div><span class="column-count">'+inCol.length+'</span></div>';
-    col.addEventListener('dragover', (e) => { e.preventDefault(); });
+    // Make the column header draggable to reorder stages.
+    const header = col.querySelector('.column-header');
+    if (header) {
+      header.setAttribute('draggable', 'true');
+      header.style.cursor = 'grab';
+      header.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('application/x-stage', st);
+        e.dataTransfer.effectAllowed = 'move';
+        col.style.opacity = '0.4';
+      });
+      header.addEventListener('dragend', () => { col.style.opacity = '1'; });
+    }
+    col.addEventListener('dragover', (e) => {
+      if (e.dataTransfer.types && e.dataTransfer.types.indexOf('application/x-stage') !== -1) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        col.style.outline = '2px solid var(--accent)';
+      } else {
+        e.preventDefault();
+      }
+    });
+    col.addEventListener('dragleave', () => { col.style.outline = ''; });
     col.addEventListener('drop', async (e) => {
+      col.style.outline = '';
+      if (e.dataTransfer.types && e.dataTransfer.types.indexOf('application/x-stage') !== -1) {
+        e.preventDefault();
+        const draggedStatus = e.dataTransfer.getData('application/x-stage');
+        if (!draggedStatus || draggedStatus === st) return;
+        const fromIdx = STATUSES.indexOf(draggedStatus);
+        const toIdx = STATUSES.indexOf(st);
+        if (fromIdx < 0 || toIdx < 0) return;
+        const moved = STATUSES.splice(fromIdx, 1)[0];
+        STATUSES.splice(toIdx, 0, moved);
+        const stages = STATUSES.map(id => ({ id, label: STATUS_LABEL[id] || id, color: COLUMN_COLOR[id] || '#62666d', statusColor: STATUS_COLOR[id] || 'muted' }));
+        try { await savePipelineStages(stages); toast('Stage order updated', 'ok'); }
+        catch (err) { toast('Reorder save failed: ' + err, 'err'); }
+        await loadBoard();
+        return;
+      }
+      // card drop (move lead to this stage)
       e.preventDefault();
       const id = Number(e.dataTransfer.getData('text/plain'));
       if (!id) return;
