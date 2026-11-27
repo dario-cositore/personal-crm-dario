@@ -2143,14 +2143,19 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           const drafts = rows.map((r) => {
             const c = getClient(r.client_id)
             let sent = false
+            let createdAt = r.created_at
             try {
               const fs = require("node:fs")
               const txt = fs.readFileSync(r.draft_path as string, "utf8")
-              const m = txt.match(/^status:\s*(.+)$/m)
-              if (m && m[1].trim().toLowerCase() === "sent") sent = true
+              const sm = txt.match(/^status:\s*(.+)$/m)
+              if (sm && sm[1].trim().toLowerCase() === "sent") sent = true
+              const cm = txt.match(/^created:\s*(.+)$/m)
+              if (cm) createdAt = cm[1].trim()
             } catch {}
-            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, sent, stage: r.stage, touch: r.touch }
+            return { id: r.id, client_id: r.client_id, client_name: c?.name ?? null, subject: r.draft_path, path: r.draft_path, approved: r.approved, sent, stage: r.stage, touch: r.touch, created_at: createdAt }
           })
+          // chronological: newest first
+          drafts.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
           return json({ drafts })
         }
         if (path === "/api/drafts/clear-sent" && req.method === "POST") {
