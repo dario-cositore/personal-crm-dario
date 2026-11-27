@@ -2716,6 +2716,18 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             enabled = !(getAppSetting("autofarm_enabled") === "1")
           }
           setAppSetting("autofarm_enabled", enabled ? "1" : "0")
+          // If enabled, kick off an immediate background run so the user sees activity.
+          if (enabled) {
+            try {
+              const { spawn } = await import("node:child_process")
+              const child = spawn("python3", ["/home/dario/workspace-v2/products/personal-crm-dario/scripts/autofarm_local.py"], {
+                detached: true,
+                stdio: "ignore",
+                env: { ...process.env },
+              })
+              child.unref()
+            } catch (e) { /* best effort */ }
+          }
           // return updated status
           const pending = (crmDb().query("SELECT COUNT(*) as c FROM pipeline WHERE approved = 0 AND draft_path IS NOT NULL").get() as any)?.c ?? 0
           const today = new Date().toISOString().slice(0, 10)
