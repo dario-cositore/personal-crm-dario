@@ -75,6 +75,18 @@ def db():
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
+def ensure_app_settings_table(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    # seed default OFF
+    row = conn.execute("SELECT value FROM app_settings WHERE key='autofarm_enabled'").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO app_settings (key, value, updated_at) VALUES ('autofarm_enabled', '0', ?)", (datetime.now(timezone.utc).isoformat(),))
+    conn.commit()
+
 def ensure_autofarm_table(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS autofarm_dispatch_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +94,22 @@ def ensure_autofarm_table(conn):
         dispatched_at TEXT NOT NULL,
         execution_id TEXT
     )""")
+    conn.commit()
+
+def is_autofarm_enabled(conn):
+    try:
+        row = conn.execute("SELECT value FROM app_settings WHERE key='autofarm_enabled'").fetchone()
+        if row is None:
+            return False
+        return str(row[0]).strip() == "1"
+    except Exception:
+        return False
+
+def set_autofarm_enabled(conn, enabled):
+    val = "1" if enabled else "0"
+    conn.execute("""INSERT INTO app_settings (key, value, updated_at) VALUES ('autofarm_enabled', ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                (val, datetime.now(timezone.utc).isoformat()))
     conn.commit()
 
 def today_dispatch_count(conn):
@@ -366,9 +394,30 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=None, help="max leads to dispatch this run")
     parser.add_argument("--dry-run", action="store_true", help="do not dispatch, just print")
+    parser.add_argument("--enable", action="store_true", help="enable autofarm and exit")
+    parser.add_argument("--disable", action="store_true", help="disable autofarm and exit")
     args = parser.parse_args()
     global LIMIT
     LIMIT = args.limit
+
+    conn = db()
+    ensure_app_settings_table(conn)
+    if args.enable:
+        set_autofarm_enabled(conn, True)
+        print("Autofarm ENABLED.")
+        conn.close()
+        return
+    if args.disable:
+        set_autofarm_enabled(conn, False)
+        print("Autofarm DISABLED.")
+        conn.close()
+        return
+
+    # Gate 1: top of run
+    if not is_autofarm_enabled(conn):
+        print("Autofarm is OFF. Exiting (0 Mach 1 steps used).")
+        conn.close()
+        return
 
     # 1. auto stop
     if AUTO_STOP:
@@ -376,11 +425,11 @@ def main():
             stop = datetime.fromisoformat(AUTO_STOP.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) >= stop:
                 print("ELITZA_AUTO_STOP_AT passed; exiting.")
+                conn.close()
                 return
         except Exception:
             pass
 
-    conn = db()
     ensure_autofarm_table(conn)
 
     # 2. queue gate
@@ -493,6 +542,11 @@ def main():
             print(f"[dry-run] would dispatch client {client_id} ({name})")
             dispatched_this_run += 1
             continue
+
+        # Gate 2: re-check before dispatching
+        if not is_autofarm_enabled(conn):
+            print("Autofarm toggled OFF mid-batch. Stopping (0 further Mach 1 steps).")
+            break
 
         # dispatch to Mach 1
         try:

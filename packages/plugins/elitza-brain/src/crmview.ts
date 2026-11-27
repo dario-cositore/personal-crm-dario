@@ -2678,6 +2678,50 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
           return json({ ok: true, uptime: process.uptime(), pid: process.pid })
         }
 
+        if (path === "/api/autofarm/status" && req.method === "GET") {
+          const { ensureAppSettingsTable, getAppSetting } = await import("./crm.js")
+          ensureAppSettingsTable()
+          const enabled = getAppSetting("autofarm_enabled") === "1"
+          // pending drafts
+          let pending = 0
+          try {
+            const rows = crmDb().query("SELECT COUNT(*) as c FROM pipeline WHERE approved = 0 AND draft_path IS NOT NULL").get() as any
+            pending = rows?.c ?? 0
+          } catch {}
+          // dispatched today
+          let dispatchedToday = 0
+          try {
+            const today = new Date().toISOString().slice(0, 10)
+            const rows = crmDb().query("SELECT COUNT(*) as c FROM autofarm_dispatch_log WHERE substr(dispatched_at,1,10) = ?").get(today) as any
+            dispatchedToday = rows?.c ?? 0
+          } catch {}
+          // updated_at
+          let updatedAt: string | null = null
+          try {
+            const row = crmDb().query("SELECT updated_at FROM app_settings WHERE key = 'autofarm_enabled'").get() as any
+            updatedAt = row?.updated_at ?? null
+          } catch {}
+          return json({ enabled, pending_drafts: pending, target_queue: 100, dispatched_today: dispatchedToday, daily_cap: 115, updated_at: updatedAt })
+        }
+        if (path === "/api/autofarm/toggle" && req.method === "POST") {
+          const { ensureAppSettingsTable, getAppSetting, setAppSetting } = await import("./crm.js")
+          ensureAppSettingsTable()
+          const body = await readBody(req)
+          let enabled: boolean
+          if (body && typeof body.enabled === "boolean") {
+            enabled = body.enabled
+          } else {
+            enabled = !(getAppSetting("autofarm_enabled") === "1")
+          }
+          setAppSetting("autofarm_enabled", enabled ? "1" : "0")
+          // return updated status
+          const pending = (crmDb().query("SELECT COUNT(*) as c FROM pipeline WHERE approved = 0 AND draft_path IS NOT NULL").get() as any)?.c ?? 0
+          const today = new Date().toISOString().slice(0, 10)
+          const dispatchedToday = (crmDb().query("SELECT COUNT(*) as c FROM autofarm_dispatch_log WHERE substr(dispatched_at,1,10) = ?").get(today) as any)?.c ?? 0
+          const updatedAt = (crmDb().query("SELECT updated_at FROM app_settings WHERE key = 'autofarm_enabled'").get() as any)?.updated_at ?? null
+          return json({ enabled, pending_drafts: pending, target_queue: 100, dispatched_today: dispatchedToday, daily_cap: 115, updated_at: updatedAt })
+        }
+
         // ---- Mail ----
         if (path === "/api/emails" && req.method === "GET") {
           const folder = url.searchParams.get("folder") || undefined

@@ -965,6 +965,8 @@ setTimeout(updateNavToggleLabel, 150);
         Search
         <span style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">⌘K</span>
       </button>
+      <button class="btn sm" id="autofarmToggle" onclick="toggleAutofarm()" title="Toggle Mach 1 autofarm dispatches" style="margin-left:8px;padding:4px 10px;font-size:11px;font-weight:600">Autofarm: OFF</button>
+      <span id="autofarmCounter" style="font-size:10px;color:var(--text-muted);margin-left:4px"></span>
       <div class="status"><div class="dot"></div><span id="statusText">Ready</span></div>
       <button class="btn ghost sm" id="wizardToggle" onclick="openWizard()" title="Setup wizard" style="margin-left:8px;padding:4px 8px">🧙</button>
       <button class="btn ghost sm" id="themeToggle" onclick="toggleTheme()" title="Toggle light/dark" style="margin-left:4px;padding:4px 8px">🌙</button>
@@ -4428,6 +4430,30 @@ async function saveTowerSecret(name, value) {
   } catch (e) { toast('Failed: ' + e, 'err'); }
 }
 
+async function loadAutofarmStatus() {
+  try {
+    const r = await api('/api/autofarm/status');
+    const btn = document.getElementById('autofarmToggle');
+    const counter = document.getElementById('autofarmCounter');
+    if (btn) {
+      btn.textContent = r.enabled ? 'Autofarm: ON' : 'Autofarm: OFF — Mach 1 Paused';
+      btn.style.background = r.enabled ? 'var(--ok-soft)' : 'var(--bg-elevated)';
+      btn.style.color = r.enabled ? 'var(--ok)' : 'var(--text-muted)';
+      btn.style.borderColor = r.enabled ? 'var(--ok)' : 'var(--border)';
+      btn.disabled = false;
+    }
+    if (counter) {
+      counter.textContent = r.enabled ? (r.pending_drafts + '/' + r.target_queue + ' queue · ' + r.dispatched_today + '/' + r.daily_cap + ' today') : '';
+    }
+  } catch (e) { /* ignore */ }
+}
+async function toggleAutofarm() {
+  const btn = document.getElementById('autofarmToggle');
+  if (btn) btn.disabled = true;
+  try { await api('/api/autofarm/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch (e) { toast('Toggle failed: ' + e, 'err'); }
+  await loadAutofarmStatus();
+}
 function closeDetail() { if (_towerConsoleTimer) { clearInterval(_towerConsoleTimer); _towerConsoleTimer = null; } showView('board'); }
 
 async function rebootServer() {
@@ -5252,7 +5278,7 @@ if (boardEl) {
     setTimeout(() => { panMoved = false; }, 50);
   });
 }
-try { loadPipelineStages().then(() => loadBoard()).then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); document.getElementById('statusText').textContent = 'Ready'; }
+try { loadPipelineStages().then(() => loadBoard()).then(() => { if (clients.length === 0) showView('scout'); }); loadQueue(); loadAutofarmStatus(); document.getElementById('statusText').textContent = 'Ready'; }
 catch (e) { document.body.insertAdjacentHTML('beforeend', '<div style="position:fixed;bottom:0;left:0;right:0;background:#ef4444;color:#fff;padding:10px;font-family:monospace;font-size:12px">'+String(e)+'</div>'); console.error(e); }
 
 // Command palette

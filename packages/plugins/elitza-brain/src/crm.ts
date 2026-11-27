@@ -645,6 +645,30 @@ let instance: Database | undefined
 let instancePath: string | undefined
 
 /** Open (or return) the single connection to the CRM database. */
+export function ensureAppSettingsTable(): void {
+  try {
+    crmDb().run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    const row = crmDb().query("SELECT value FROM app_settings WHERE key = 'autofarm_enabled'").get() as any
+    if (!row) {
+      crmDb().run("INSERT INTO app_settings (key, value, updated_at) VALUES ('autofarm_enabled', '0', ?)", [new Date().toISOString()])
+    }
+  } catch { /* best effort */ }
+}
+
+export function getAppSetting(key: string): string | null {
+  ensureAppSettingsTable()
+  try {
+    const row = crmDb().query("SELECT value FROM app_settings WHERE key = ?").get(key) as any
+    if (!row) return null
+    return row.value ?? null
+  } catch { return null }
+}
+
+export function setAppSetting(key: string, value: string): void {
+  ensureAppSettingsTable()
+  crmDb().run("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [key, value, new Date().toISOString()])
+}
+
 export function crmDb(): Database {
   const file = crmDbPath()
   if (instance && instancePath === file) return instance
