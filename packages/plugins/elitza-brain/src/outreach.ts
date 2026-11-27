@@ -314,6 +314,15 @@ export function writeDraft(
     "UPDATE pipeline SET draft_path = ?, approved = 0, queued_touch = ?, variant = ?, updated_at = ? WHERE id = ?",
     [filePath, touch, input.variant ?? null, nowISO(), pipelineRow.id],
   )
+  // Auto-assign "Draft Ready" stage when a draft lands in the approval queue,
+  // but only for leads still in an early stage (don't overwrite later progress).
+  try {
+    const c = getClient(clientId)
+    const early = new Set(["scouted", "manual_check", "enriched", "not_enough_info"])
+    if (c && early.has(c.status || "")) {
+      updateClient(clientId, { status: "draft_ready" })
+    }
+  } catch { /* best effort */ }
   return { filePath, row: getPipelineRow(pipelineRow.id) ?? pipelineRow }
 }
 

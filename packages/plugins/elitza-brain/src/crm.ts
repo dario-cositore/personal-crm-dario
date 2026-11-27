@@ -1546,7 +1546,7 @@ export function configuredStageIds(): string[] {
       if (Array.isArray(stages) && stages.length) return stages.map((s: any) => String(s.id))
     }
   } catch { /* fall through */ }
-  return ["scouted", "manual_check", "contacted", "followup_1", "followup_2", "followup_3", "yes", "no", "stale", "diagnose", "proposal", "workbook", "scheduled", "payment", "done"]
+  return ["scouted", "manual_check", "draft_ready", "contacted", "followup_1", "followup_2", "followup_3", "yes", "no", "stale", "diagnose", "proposal", "workbook", "scheduled", "payment", "done"]
 }
 
 export function stageExists(id: string): boolean {
