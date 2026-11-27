@@ -2008,13 +2008,32 @@ async function submitImportCsv() {
 function renderStageEditorList() {
   const list = document.getElementById('stageEditorList');
   list.innerHTML = stageEditorStages.map((s, i) => 
-    '<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md)">' +
+    '<div class="stage-row" data-idx="' + i + '" draggable="true" style="display:flex;gap:8px;align-items:center;padding:6px 8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);cursor:grab">' +
+      '<span style="cursor:grab;color:var(--text-muted);font-size:14px" title="Drag to reorder">⋮⋮</span>' +
       '<input type="color" value="' + s.color + '" style="width:32px;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer" onchange="stageEditorStages[' + i + '].color=this.value">' +
       '<input value="' + esc(s.label) + '" style="flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)" onchange="stageEditorStages[' + i + '].label=this.value">' +
       '<span style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">' + esc(s.id) + '</span>' +
       '<button class="btn ghost sm" onclick="removeStage(' + i + ')" style="padding:2px 6px;color:var(--err)">✕</button>' +
     '</div>'
   ).join('');
+  // wire drag-and-drop reordering
+  const rows = list.querySelectorAll('.stage-row');
+  let dragSrc = null;
+  rows.forEach((row) => {
+    row.addEventListener('dragstart', (e) => { dragSrc = Number(row.dataset.idx); row.style.opacity = '0.5'; e.dataTransfer.effectAllowed = 'move'; });
+    row.addEventListener('dragend', () => { row.style.opacity = '1'; });
+    row.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.style.outline = '2px solid var(--accent)'; });
+    row.addEventListener('dragleave', () => { row.style.outline = ''; });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      row.style.outline = '';
+      const target = Number(row.dataset.idx);
+      if (dragSrc === null || dragSrc === target) return;
+      const moved = stageEditorStages.splice(dragSrc, 1)[0];
+      stageEditorStages.splice(target, 0, moved);
+      renderStageEditorList();
+    });
+  });
 }
 
 async function removeStage(i) {
