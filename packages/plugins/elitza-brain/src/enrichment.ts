@@ -74,32 +74,6 @@ function extractSocialMap(urls: string[]): { linkedin?: string; twitter?: string
   return out
 }
 
-async function resolveOpenCodeConfig(): Promise<{ url: string; key: string; orgId: string; model: string }> {
-  let key = process.env.OPENCODE_API_KEY?.trim() || ""
-  let orgId = ""
-  let model = "beam-free"
-  try {
-    const { default: Database } = await import("bun:sqlite")
-    const dbPath = process.env.OPENCODE_DB || ((process.env.HOME || "") + "/.ai-enablement-agent/home/data/enablement.db")
-    const db = new (Database as any)(dbPath, { readonly: true })
-    const row = db
-      .query("SELECT value FROM credential WHERE id LIKE 'cred_%opencode%' OR json_extract(value, '$.metadata.orgID') IS NOT NULL")
-      .get() as any
-    if (row?.value) {
-      const cred = JSON.parse(row.value)
-      if (!key && cred.access) key = cred.access
-      if (cred.metadata?.orgID) orgId = cred.metadata.orgID
-    }
-    db.close()
-  } catch {}
-  try {
-    const { soulGet } = await import("./soul.js")
-    const saved = soulGet("chat_model", "").trim()
-    if (saved) model = saved
-  } catch {}
-  return { url: "https://opencode.ai/inference/go/openai/v1", key, orgId, model }
-}
-
 function buildDeterministicEvidencePacket(intel: WebsiteIntelV2): string {
   const lines: string[] = []
   lines.push(`Pages crawled (${intel.pages_crawled.length}): ${intel.pages_crawled.map((p) => `${p.bucket}:${p.url}`).join(", ") || "none"}`)
@@ -325,102 +299,7 @@ export async function enrichClient(
   const socials = extractSocialMap(intel.socials)
   const needsPhoneFormScript = outreachRoute === "phone_only" || outreachRoute === "whatsapp_only"
 
-  const { url: llmUrl, key: llmKey, orgId, model } = await resolveOpenCodeConfig()
-  if (!llmKey) {
-    return {
-      ok: false, client_id: clientId, website, emails: sendableEmails, phones: intel.phones_found, socials,
-      diagnosis: "", proposal: "", price: "", risk_level: "", risk_score: 0, risk_notes: "",
-      tech_stack: "", revenue_estimate: "", employee_count: "", next_action: "",
-      error: "OpenCode Go plan is not connected.",
-    }
-  }
-
-  const evidencePacket = buildDeterministicEvidencePacket(intel)
-  const siteExcerpt = (intel.site_text || searchSnippets.join("\n")).slice(0, 6500)
-
-  const systemPrompt = `You are an operational B2B analyst for Dario Cositore (AI Enablement & Owned IA Agents).
-Analyze ONLY the deterministic website audit and scraped text for this SMB/practice.
-STRICT RULES:
-1. ZERO HALLUCINATION: Never invent tools, staff counts, locations, VC rounds, GitHub profiles, or services not in the input. Cite deterministic evidence_ids (e.g. "form:0", "loc:0", "hours:0", "widget:whatsapp", "pdf:0", "vid:0").
-2. LANGUAGE: Write human-readable fields in ${lang === "it" ? "natural Italian (strictly write 'IA', NEVER English 'AI'; never write 'flusso', 'flussi', 'collo di bottiglia', 'sistemi operativi', 'senza soluzione di continuità')" : "concise English"}. Never leak snake_case enum keys into prose.
-3. TOUCH 1 CANDIDATE:
-   - question_it_or_en: One second-person binary operational question grounded in a verified signal (e.g. "quando un paziente vi contatta dal sito per una delle aree specialistiche, chi smista la richiesta tra segreteria e medici?"). No <title> tag lists, no Saturday hours, no phone/email counts, no company name in 3rd person.
-   - bridge_it_or_en: One calm matter-of-fact sentence starting with ${lang === "it" ? '"Te lo chiedo perché..."' : '"I ask because..."'} explaining the handoff friction without hyperbole (no "scommetto che", no "ore preziose").
-4. NON-EMAIL SCRIPT (${needsPhoneFormScript ? "REQUIRED for this lead" : "null"}): ${
-    needsPhoneFormScript
-      ? `Populate phone_and_form_script with {"channel":"${outreachRoute === "whatsapp_only" ? "whatsapp" : intel.forms.length ? "contact_form" : "phone"}","phone_opener":"2 concise spoken sentences using the binary question + calm bridge, zero pricing","written_message":"short WhatsApp/form message using the binary question + calm bridge + 15-min check-in, zero pricing"}.`
-      : "Set phone_and_form_script to null."
-  }
-Output ONLY valid JSON.`
-
-  const userPrompt = `Business: ${client.name}
-Vertical: ${client.vertical ?? client.category ?? "unknown"}
-Address: ${client.address ?? intel.address ?? "unknown"}
-Outreach route: ${outreachRoute}
-
-DETERMINISTIC AUDIT EVIDENCE:
-${evidencePacket}
-
-SCRAPED TEXT EXCERPT:
-${siteExcerpt}
-
-Return ONLY this JSON object:
-{
-  "business_summary": "2-3 factual sentences",
-  "primary_vertical_noun": "studio_medico | studio_dentistico | studio_professionale | impresa_artigiana | pmi_servizi | altro",
-  "evidence_confidence": "high | medium | low",
-  "pain_category": "lead_intake | crm_ops | customer_support | doc_automation | outbound",
-  "pain_points": [{"claim": "concrete operational friction", "evidence_ids": ["form:0"]}],
-  "single_thread_focus": "intake_triage | whatsapp_phone_booking | quotes_and_field_requests | documents_and_practices",
-  "touch1_question_candidate": {
-    "question_it_or_en": "...",
-    "bridge_it_or_en": "...",
-    "evidence_ids": ["form:0"]
-  },
-  "phone_and_form_script": ${needsPhoneFormScript ? '{"channel":"phone","phone_opener":"...","written_message":"..."}' : "null"},
-  "offer_rationale": "1-2 sentences for internal CRM operator explaining which tier fits",
-  "next_action": "Concrete next step for operator"
-}`
-
-  let parsedSyn: Partial<OperationalSynthesisV2> = {}
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${llmKey}`,
-      "x-opencode-session": `elitza-enrich-v2-${Date.now()}`,
-    }
-    if (orgId) headers["x-opencode-org-id"] = orgId
-
-    const res = await fetch(`${llmUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.2,
-        max_tokens: 4096,
-        reasoning_effort: "low",
-        response_format: { type: "json_object" },
-      }),
-      signal: AbortSignal.timeout(45_000),
-    })
-    if (res.ok) {
-      const data = (await res.json()) as any
-      const msg = data?.choices?.[0]?.message || {}
-      let raw = String(msg.content || "").trim()
-      if (!raw && msg.reasoning_content) {
-        const m = String(msg.reasoning_content).match(/\{[\s\S]*\}/)
-        if (m) raw = m[0]
-      }
-      raw = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim()
-      parsedSyn = JSON.parse(raw)
-    }
-  } catch (e) {
-    log(`LLM synthesis fallback triggered: ${String(e)}`)
-  }
+  const parsedSyn: Partial<OperationalSynthesisV2> = {}
 
   const defaultQ =
     lang === "it"
@@ -587,11 +466,6 @@ Return ONLY this JSON object:
       body: JSON.stringify(recordV2, null, 2),
       occurred_at: now,
     })
-  } catch {}
-
-  try {
-    const { generateClientCallPlaybook } = await import("./playbooks.js")
-    await generateClientCallPlaybook(clientId)
   } catch {}
 
   return {

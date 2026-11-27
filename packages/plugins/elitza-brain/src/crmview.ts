@@ -2095,10 +2095,7 @@ export function startCrmView(ctx?: any): { stop: () => void; port: number } | nu
             const { generateClientOutreachDraft } = await import("./outreach.js")
             await generateClientOutreachDraft(id)
           } catch (e) { console.error("[select-offer] draft error:", String(e)) }
-          try {
-            const { generateClientCallPlaybook } = await import("./playbooks.js")
-            await generateClientCallPlaybook(id)
-          } catch (e) { console.error("[select-offer] playbook error:", String(e)) }
+          // Call playbook generation (LLM) removed; deterministic only.
           return json({ ok: true, offer_track: res.offer_track, offer_rationale: res.offer_rationale })
         }
         if (path === "/api/clients/delete" && req.method === "POST") {
